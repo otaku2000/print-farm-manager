@@ -253,6 +253,24 @@ try {
   db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('dispatch_batch_size', '10')").run();
 } catch (_) {}
 
+// Preventive maintenance. Farm-wide defaults live in settings; a printer may override
+// either interval (NULL = use the default). The log records each service; the clock for
+// "days since" and "print hours since" restarts at the latest entry for that printer.
+try { db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('maintenance_interval_days', '90')").run(); } catch (_) {}
+try { db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('maintenance_interval_hours', '2000')").run(); } catch (_) {}
+try { db.exec('ALTER TABLE printers ADD COLUMN maintenance_interval_days INTEGER'); } catch (_) {}
+try { db.exec('ALTER TABLE printers ADD COLUMN maintenance_interval_hours INTEGER'); } catch (_) {}
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS printer_maintenance (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    printer_id   INTEGER NOT NULL,
+    performed_at INTEGER NOT NULL,
+    note         TEXT,
+    created_at   INTEGER NOT NULL
+  )`);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_maintenance_printer ON printer_maintenance(printer_id, performed_at DESC)');
+} catch (_) {}
+
 // Make jobs.gcode_id nullable so gcodes can be deleted after jobs have run
 const gcodeIdCol = db.prepare("PRAGMA table_info(jobs)").all().find(c => c.name === 'gcode_id');
 if (gcodeIdCol && gcodeIdCol.notnull === 1) {

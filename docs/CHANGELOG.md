@@ -2,6 +2,22 @@
 
 ---
 
+## 2026-11-06: Printer maintenance warnings
+
+Operators had no way to see when a printer was due for upkeep. A new Maintenance page flags any printer that reaches 90 days or 2000 print hours since its last logged service (or since it was added, if none is logged). Both limits are editable farm-wide, and either can be overridden per printer. The Fleet page shows a banner with the count and a "Service due" tag on each affected card. Warnings only: nothing here changes dispatch, holds, or any path that credits `completed_qty`.
+
+Print hours are the summed `started_at` to `finished_at` time of jobs that ran on the printer since its last service. Existing printers have no service logged, so on first run any printer older than 90 days is flagged until someone logs a service. Verified by the test suite and a client build; no printer hardware is involved.
+
+### Changes
+- `server/db.js`: `printer_maintenance` table, `printers.maintenance_interval_days` and `maintenance_interval_hours` columns (additive), default settings seeded (90 and 2000).
+- `server/routes/maintenance.js` (new): status list, log a service, history, per-printer intervals, delete entry. Mounted at `/api/maintenance` in `server/index.js`.
+- `server/routes/settings.js`: the two default intervals are allowed keys with integer validation.
+- `server/routes/backup.js`: `printer_maintenance` exported, cleared, restored, and its sequence synced.
+- `client/src/pages/Maintenance.jsx` (new), `client/src/App.jsx`: page, route, and sidebar item.
+- `client/src/pages/Fleet.jsx`: warning banner and per-card tag, fetched passively with errors swallowed.
+- `server/tests/maintenance.test.js` (new): thresholds, overrides, reset on service, validation, history.
+- `docs/api.md`, `docs/web-app.md`: documented the endpoints, settings keys, and page.
+
 ## 2026-09-30: Print Queue page under Fleet
 
 The dispatch check on the Projects page explains one part at a time, and the Schedule page shows time rather than eligibility. Neither answers the question an operator asks walking the floor: "what is waiting, in what order, and which printers can take it?" The new Print Queue page (sidebar, indented under Fleet, at `/fleet/queue`) lists every open part of every active project in the scheduler's own order, with a tag for each printer that matches the part (model, group, loaded filament) coloured by whether it is ready, busy, or awaiting sign-off. `NEXT` marks a ready printer that would print this part on its next dispatch. A part with no matching printer shows why instead: no G-code, no active printer of that model, none in the allowed groups, or none with the required filament loaded.

@@ -807,8 +807,55 @@ Body: `{ "value": "..." }`. Allowed keys:
 |---|---|---|
 | `dispatch_batch_size` | integer 1-100 | How many printers the scheduler keeps uploading or printing at once (a concurrency target, not a fixed group size; it draws deeper into the ready queue to fill the target if some printers have no dispatchable candidate) |
 | `farm_name` | ≤ 40 chars | Sidebar branding (falls back to "Print Farm") |
+| `maintenance_interval_days` | integer 1-100000 | Farm-wide maintenance interval in days (default 90) |
+| `maintenance_interval_hours` | integer 1-100000 | Farm-wide maintenance interval in print hours (default 2000) |
 
 Returns `400` for unknown keys or failed validation.
+
+---
+
+## Maintenance
+
+Preventive maintenance warnings. A printer is overdue when it reaches either limit (days or print hours) since its latest logged service, or since it was added if none is logged. Print hours are the summed `started_at` to `finished_at` time of jobs that ran on the printer. Warnings only: nothing here affects dispatch. Farm-wide defaults are the `maintenance_interval_days` and `maintenance_interval_hours` settings; a printer can override either.
+
+### `GET /api/maintenance`
+
+Active printers only, overdue first.
+
+```json
+{
+  "defaults": { "interval_days": 90, "interval_hours": 2000 },
+  "overdue_count": 1,
+  "printers": [
+    {
+      "printer_id": 4, "name": "MK4S_04", "model": "mk4s", "group_name": null,
+      "last_performed_at": null, "since": 1760000000000,
+      "days_since": 112.3, "print_hours_since": 840.5,
+      "interval_days": 90, "interval_hours": 2000,
+      "custom_days": null, "custom_hours": null,
+      "overdue": true, "overdue_reason": "days"
+    }
+  ]
+}
+```
+
+`overdue_reason` is `"days"`, `"hours"`, `"both"`, or `null`.
+
+### `POST /api/maintenance/:printerId/done`
+
+Logs a service and restarts both counters. Body (all optional): `{ "note": "cleaned rods", "performed_at": 1760000000000 }`. `performed_at` is epoch ms and must not be in the future (default now). Returns `201` with the log row, `400` for a bad `performed_at`, `404` for an unknown printer.
+
+### `GET /api/maintenance/:printerId/history`
+
+Log entries for a printer, newest first. `404` for an unknown printer.
+
+### `PUT /api/maintenance/:printerId/intervals`
+
+Per-printer override. Body: `{ "interval_days": 30, "interval_hours": null }`. `null` or an omitted key falls back to the farm default. Returns the printer's status object. `400` for non-integers or values outside 1-100000, `404` for an unknown printer.
+
+### `DELETE /api/maintenance/entry/:entryId`
+
+Removes a mistaken log entry. `404` if not found.
 
 ---
 

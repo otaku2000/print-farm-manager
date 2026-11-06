@@ -47,6 +47,7 @@ app.use('/api/models',          modelsRouter);
 app.use('/api/groups',          groupsRouter);
 app.use('/api/filaments',       filamentsRouter);
 app.use('/api/schedule',        scheduleRouter);
+app.use('/api/maintenance',     require('./routes/maintenance')(db));
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -25,6 +25,7 @@ The React single-page application served by Vite. In development, Vite runs on p
 | `client/src/pages/Printers.jsx` | Searchable all-printers directory |
 | `client/src/pages/PrinterDetail.jsx` | Per-printer event timeline and note form |
 | `client/src/pages/Decommissioned.jsx` | Decommissioned printer list with notes and recommission |
+| `client/src/pages/Maintenance.jsx` | Maintenance page (`/maintenance`): farm default intervals (90 days or 2000 print hours), per-printer overrides, log a service, history. Fleet shows a "due for maintenance" banner and a "Service due" tag on affected cards. Warning only, never blocks dispatch |
 | `client/src/pages/Settings.jsx` | CSV import, flagged-row resolution, printer models |
 | `client/src/pages/Dashboard.jsx` | TV command center dashboard |
 | `client/src/pages/Projects.jsx` | Project/Part/G-code management |

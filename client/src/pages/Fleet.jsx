@@ -142,8 +142,15 @@ function PrinterCard({ printer, selected, onToggleSelect, onSetReady, onBadPrint
         <span style={{ fontWeight: 600, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {printer.name}
         </span>
-        <span style={{ background: style.bg, color: style.text, borderRadius: 4, padding: '2px 8px', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
-          {style.label}
+        <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+          {printer.maintenanceDue && (
+            <span title="Maintenance due" style={{ background: '#78350f', color: '#fbbf24', borderRadius: 4, padding: '2px 6px', fontSize: 11, fontWeight: 700 }}>
+              Service due
+            </span>
+          )}
+          <span style={{ background: style.bg, color: style.text, borderRadius: 4, padding: '2px 8px', fontSize: 12, fontWeight: 700 }}>
+            {style.label}
+          </span>
         </span>
       </div>
 
@@ -334,7 +341,8 @@ export default function Fleet() {
   const [confirm, confirmModal]               = useConfirm();
   const [showToast, toastEl]                  = useToast();
   const [printers, setPrinters]               = useState([]);
-  const [loading, setLoading]                 = useState(true);
+  const [maintDue, setMaintDue]               = useState(new Set());
+  const [loading,setLoading]                 = useState(true);
   const [error, setError]                     = useState(null);
   const [filter, setFilter]                   = useState('ALL');
   const [search, setSearch]                   = useState('');
@@ -354,6 +362,10 @@ export default function Fleet() {
       if (!res.ok) throw new Error('Failed to fetch printers');
       const data = await res.json();
       setPrinters(data);
+      // Maintenance is a passive warning: a failure here must not break the fleet view.
+      fetch('/api/maintenance').then(r => r.json())
+        .then(m => setMaintDue(new Set(m.printers.filter(p => p.overdue).map(p => p.printer_id))))
+        .catch(() => {});
       setLastPolled(Date.now());
       setError(null);
     } catch (err) {
@@ -770,6 +782,24 @@ export default function Fleet() {
         </div>
       )}
 
+      {/* Maintenance warning banner */}
+      {maintDue.size > 0 && (
+        <div style={{
+          background: '#78350f', border: '1px solid #92400e', borderRadius: 8,
+          padding: '10px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+        }}>
+          <span style={{ color: '#fbbf24', fontWeight: 600, fontSize: 14 }}>
+            {maintDue.size} printer{maintDue.size !== 1 ? 's' : ''} due for maintenance
+          </span>
+          <button
+            onClick={() => navigate('/maintenance')}
+            style={{ background: '#92400e', color: '#fde68a', border: 'none', borderRadius: 4, padding: '4px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+          >
+            View
+          </button>
+        </div>
+      )}
+
       {/* Confirmation banner */}
       {awaitingConfirmation.length > 0 && (
         <div style={{
@@ -898,7 +928,7 @@ export default function Fleet() {
             {group.map((printer) => (
               <PrinterCard
                 key={printer.id}
-                printer={printer}
+                printer={maintDue.has(printer.id) ? { ...printer, maintenanceDue: true } : printer}
                 selected={selectedForReady.has(printer.id)}
                 onToggleSelect={toggleSelect}
                 onSetReady={setReady}

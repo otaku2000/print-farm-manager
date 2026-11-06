@@ -75,6 +75,7 @@ module.exports = (db) => {
     const filament_types  = db.prepare('SELECT * FROM filament_types').all();
     const filament_colors = db.prepare('SELECT * FROM filament_colors').all();
     const settings        = db.prepare('SELECT * FROM settings').all();
+    const printer_maintenance = db.prepare('SELECT * FROM printer_maintenance').all();
     partLedger.ensureSchema(db);
     const part_qty_ledger = db.prepare('SELECT * FROM part_qty_ledger').all();
 
@@ -101,6 +102,7 @@ module.exports = (db) => {
       filament_types,
       filament_colors,
       settings,
+      printer_maintenance,
       part_qty_ledger,
       gcode_files: gcodeFiles,
     };
@@ -160,6 +162,7 @@ module.exports = (db) => {
         // below; parts from an older backup without them are rebuilt after the insert.
         db.prepare('DELETE FROM part_qty_ledger').run();
         db.prepare('DELETE FROM printer_events').run();
+        db.prepare('DELETE FROM printer_maintenance').run();
         db.prepare('DELETE FROM jobs').run();
         db.prepare('DELETE FROM gcodes').run();
         db.prepare('DELETE FROM parts').run();
@@ -186,7 +189,8 @@ module.exports = (db) => {
           filament_type:  makeInserter(db, 'filament_types', backup.filament_types || []),
           filament_color: makeInserter(db, 'filament_colors', backup.filament_colors || []),
           setting:        makeInserter(db, 'settings', backup.settings || []),
-          ledger:         makeInserter(db, 'part_qty_ledger', backup.part_qty_ledger || []),
+          maintenance:    makeInserter(db, 'printer_maintenance', backup.printer_maintenance || []),
+          ledger:        makeInserter(db, 'part_qty_ledger', backup.part_qty_ledger || []),
         };
 
         // printer_models before printers — printers.model refers to it logically
@@ -205,6 +209,7 @@ module.exports = (db) => {
         for (const t of (backup.filament_types  || [])) stmts.filament_type.run(t);
         for (const c of (backup.filament_colors || [])) stmts.filament_color.run(c);
         for (const s of (backup.settings || [])) stmts.setting.run(s);
+        for (const m of (backup.printer_maintenance || [])) stmts.maintenance.run(m);
         for (const l of (backup.part_qty_ledger || [])) stmts.ledger.run(l);
 
         // Parts with no ledger rows (a backup from before the ledger existed) get the
@@ -215,7 +220,7 @@ module.exports = (db) => {
         for (const [table, col] of [
           ['printers', 'printers'], ['projects', 'projects'],
           ['parts', 'parts'], ['gcodes', 'gcodes'], ['jobs', 'jobs'],
-          ['printer_events', 'printer_events'], ['part_qty_ledger', 'part_qty_ledger'],
+          ['printer_events', 'printer_events'], ['printer_maintenance', 'printer_maintenance'], ['part_qty_ledger', 'part_qty_ledger'],
           ['filament_types', 'filament_types'], ['filament_colors', 'filament_colors'],
         ]) {
           db.prepare(`

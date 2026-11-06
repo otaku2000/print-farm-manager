@@ -11,6 +11,7 @@ import Schedule from './pages/Schedule';
 import PrintQueue from './pages/PrintQueue';
 import Settings from './pages/Settings';
 import Decommissioned from './pages/Decommissioned';
+import Maintenance from './pages/Maintenance';
 
 const NAV_ITEMS = [
   { to: '/',               label: 'Dashboard' },
@@ -21,6 +22,7 @@ const NAV_ITEMS = [
   { to: '/projects',       label: 'Projects' },
   { to: '/jobs',           label: 'Jobs' },
   { to: '/schedule',       label: 'Schedule' },
+  { to: '/maintenance',    label: 'Maintenance' },
   { to: '/decommissioned', label: 'Decommissioned' },
   { to: '/settings',       label: 'Settings' },
 ];
@@ -127,6 +129,7 @@ export default function App() {
             <Route path="/parts/:id/audit" element={<PartAudit />} />
             <Route path="/jobs"            element={<Jobs />} />
             <Route path="/schedule"        element={<Schedule />} />
+            <Route path="/maintenance"     element={<Maintenance />} />
             <Route path="/decommissioned"  element={<Decommissioned />} />
             <Route path="/settings"        element={<Settings />} />
           </Routes>
