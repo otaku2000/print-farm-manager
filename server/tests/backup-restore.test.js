@@ -109,6 +109,13 @@ beforeEach(() => {
       note        TEXT,
       created_at  INTEGER NOT NULL
     );
+    CREATE TABLE printer_maintenance (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      printer_id   INTEGER NOT NULL,
+      performed_at INTEGER NOT NULL,
+      note         TEXT,
+      created_at   INTEGER NOT NULL
+    );
     CREATE TABLE printer_models (
       model_id   TEXT PRIMARY KEY,
       label      TEXT NOT NULL,
@@ -172,6 +179,7 @@ beforeEach(() => {
   db.prepare(`INSERT INTO filament_colors (type_id, name, hex_color) VALUES (2, 'Signal Red', '#cc0000')`).run();
   db.prepare(`INSERT INTO settings (key, value) VALUES ('farm_name', 'Test Farm')`).run();
   db.prepare(`INSERT INTO settings (key, value) VALUES ('dispatch_batch_size', '5')`).run();
+  db.prepare(`INSERT INTO printer_maintenance (printer_id, performed_at, note, created_at) VALUES (1, 1700000000000, 'cleaned rods', ?)`).run(now);
 
   // server/routes/backup.js declares its Express router at module scope, like every
   // route file in this codebase. Node's require() cache means a second require() in the
@@ -559,6 +567,23 @@ describe('Backup restore — gcode_files path traversal', () => {
     try {
       const restoreRes = await request(app).post('/api/backup/restore').attach('file', backupFile);
       expect(restoreRes.status).toBe(400);
+    } finally {
+      fs.unlinkSync(backupFile);
+    }
+  });
+});
+
+describe('Backup export/restore: maintenance log', () => {
+  test('maintenance entries survive a restore', async () => {
+    const exportRes = await request(app).get('/api/backup');
+    expect(exportRes.body.printer_maintenance).toHaveLength(1);
+    const backupFile = writeTempBackupFile(exportRes.body);
+    try {
+      db.prepare("UPDATE printer_maintenance SET note = 'wiped', performed_at = 0").run();
+      const restoreRes = await request(app).post('/api/backup/restore').attach('file', backupFile);
+      expect(restoreRes.status).toBe(200);
+      const row = db.prepare('SELECT * FROM printer_maintenance').get();
+      expect(row).toMatchObject({ printer_id: 1, performed_at: 1700000000000, note: 'cleaned rods' });
     } finally {
       fs.unlinkSync(backupFile);
     }

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const ALLOWED_KEYS = new Set(['dispatch_batch_size', 'farm_name']);
+const ALLOWED_KEYS = new Set(['dispatch_batch_size', 'farm_name', 'maintenance_interval_days', 'maintenance_interval_hours']);
 
 module.exports = (db) => {
   // GET /api/settings — returns all settings as { key: value, ... }
@@ -27,6 +27,13 @@ module.exports = (db) => {
       const n = parseInt(value, 10);
       if (isNaN(n) || n < 1 || n > 100) {
         return res.status(400).json({ error: 'dispatch_batch_size must be an integer between 1 and 100' });
+      }
+    }
+
+    if (key === 'maintenance_interval_days' || key === 'maintenance_interval_hours') {
+      const n = Number(value);
+      if (!Number.isInteger(n) || n < 1 || n > 100000) {
+        return res.status(400).json({ error: `${key} must be an integer between 1 and 100000` });
       }
     }
 
