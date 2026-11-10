@@ -5,6 +5,7 @@ const fs = require('fs');
 const router = express.Router();
 
 const zip = require('../zip-reader');
+const { AMS_SLOT_MATCH } = require('../drivers/bambu-ams');
 const { readSlicerMetadata } = require('../slicer-metadata');
 const { normalizePrintTime, normalizeMaterialGrams } = require('../estimate-input');
 
@@ -162,8 +163,13 @@ module.exports = (db, scheduler = null) => {
       });
     }
 
-    // ams_slot: -1 = external spool, 0–N = AMS slot, null = not applicable (non-Bambu)
-    const parsedAmsSlot = ams_slot !== undefined && ams_slot !== '' ? parseInt(ams_slot, 10) : null;
+    // ams_slot (Bambu only): -2 = match a slot from the AMS at dispatch, -1 = external
+    // spool, 0 to N = a fixed AMS tray, null = not applicable (non-Bambu)
+    const parsedAmsSlot = ams_slot !== undefined && ams_slot !== '' ? Number(ams_slot) : null;
+    if (parsedAmsSlot !== null && (!Number.isInteger(parsedAmsSlot) || parsedAmsSlot < AMS_SLOT_MATCH)) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: 'ams_slot must be -2 (match from AMS), -1 (external spool), or an AMS slot number from 0' });
+    }
 
     // What the sliced file says about itself beats what the client inferred from the
     // filename: an Orca or Bambu .3mf carries the slicer's own seconds and grams, and a

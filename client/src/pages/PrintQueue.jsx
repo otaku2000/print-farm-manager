@@ -29,7 +29,9 @@ const MATCH_STATE = {
 
 function tagTitle(m) {
   const st = MATCH_STATE[m.state] || MATCH_STATE.unknown;
-  const loaded = [m.loaded_material, m.loaded_color].filter(Boolean).join(' / ') || 'no filament set';
+  const loaded = m.filament_auto
+    ? m.filament_label
+    : [m.loaded_material, m.loaded_color].filter(Boolean).join(' / ') || 'no filament set';
   const lines = [`${m.name} (${m.model})`, `${st.label}, printer reports ${m.status}`, `Loaded: ${loaded}`, `G-code: ${m.filename}`];
   if (m.group_name) lines.splice(1, 0, `Group: ${m.group_name}`);
   if (m.state === 'ready' && m.next_up) {

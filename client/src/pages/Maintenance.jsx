@@ -16,6 +16,46 @@ function fmtDate(ms) {
   return new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+// Today as YYYY-MM-DD in the browser's local time zone (the format <input type="date"> uses).
+function todayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// The service time to log for a picked date: now for today, so the counters restart from
+// this moment, and local midnight for an earlier day. Midnight means print hours from
+// later that day count toward the next interval, which errs toward servicing early.
+function performedAtFor(isoDate) {
+  if (isoDate === todayIso()) return Date.now();
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return new Date(y, m - 1, d).getTime();
+}
+
+const DAY_MS = 86400000;
+
+// Whole calendar days from today to the due date, in the browser's time zone.
+function daysUntil(ms) {
+  const due = new Date(ms); due.setHours(0, 0, 0, 0);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.round((due - today) / DAY_MS);
+}
+
+function dueIn(ms) {
+  const d = daysUntil(ms);
+  if (d === 0) return 'due today';
+  if (d === 1) return 'in 1 day';
+  if (d > 1) return `in ${d} days`;
+  return d === -1 ? '1 day overdue' : `${-d} days overdue`;
+}
+
+// Amber in the last 14 days before the date, red once it has passed.
+function nextDueColor(ms) {
+  const d = daysUntil(ms);
+  if (d < 0) return '#f87171';
+  if (d <= 14) return '#fbbf24';
+  return '#94a3b8';
+}
+
 function reasonText(p) {
   if (p.overdue_reason === 'both') return 'Overdue: days and print hours';
   if (p.overdue_reason === 'days') return 'Overdue: days';
@@ -26,6 +66,7 @@ function reasonText(p) {
 function PrinterRow({ p, onChanged, showToast, confirm }) {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState('');
+  const [serviceDate, setServiceDate] = useState(todayIso);
   const [days, setDays] = useState(p.custom_days ?? '');
   const [hours, setHours] = useState(p.custom_hours ?? '');
   const [history, setHistory] = useState([]);
@@ -38,16 +79,20 @@ function PrinterRow({ p, onChanged, showToast, confirm }) {
   useEffect(() => { if (open) loadHistory(); }, [open, loadHistory]);
 
   const markDone = async () => {
+    if (!serviceDate) return showToast('Pick the date the printer was serviced', 'error');
+    if (serviceDate > todayIso()) return showToast('The service date cannot be in the future', 'error');
+    const performedAt = performedAtFor(serviceDate);
     const res = await fetch(`/api/maintenance/${p.printer_id}/done`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note }),
+      body: JSON.stringify({ note, performed_at: performedAt }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       return showToast('Could not log maintenance: ' + (body.error || res.status), 'error');
     }
     setNote('');
-    showToast(`${p.name} marked as serviced`);
+    setServiceDate(todayIso());
+    showToast(`${p.name} marked as serviced on ${fmtDate(performedAt)}`);
     loadHistory();
     onChanged();
   };
@@ -91,7 +136,8 @@ function PrinterRow({ p, onChanged, showToast, confirm }) {
         <span style={{ color: '#64748b', fontSize: 12, fontFamily: 'monospace' }}>{p.model}</span>
         <span style={{ color: '#94a3b8', fontSize: 13, flex: 1, minWidth: 200 }}>
           {Math.floor(p.days_since)} / {p.interval_days} days &middot; {Math.floor(p.print_hours_since)} / {p.interval_hours} print hrs
-          &middot; last service: {fmtDate(p.last_performed_at)}
+          &middot; last service: {fmtDate(p.last_performed_at)}{' '}
+          &middot; next service: <span style={{ color: nextDueColor(p.next_due_at) }}>{fmtDate(p.next_due_at)} ({dueIn(p.next_due_at)})</span>
         </span>
         <span style={{
           background: p.overdue ? '#78350f' : '#14532d', color: p.overdue ? '#fbbf24' : '#86efac',
@@ -104,13 +150,25 @@ function PrinterRow({ p, onChanged, showToast, confirm }) {
       {open && (
         <div style={{ borderTop: '1px solid #1e2433', padding: 14, display: 'flex', gap: 28, flexWrap: 'wrap' }}>
           <div style={{ minWidth: 260 }}>
-            <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 6 }}>Log a service (restarts both counters)</div>
+            <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 6 }}>Log a service (restarts both counters from that date)</div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, color: '#64748b', fontSize: 12 }}>
+              Last maintained on
+              <input
+                type="date"
+                style={{ ...inputStyle, width: 150, colorScheme: 'dark' }}
+                value={serviceDate}
+                max={todayIso()}
+                onChange={e => setServiceDate(e.target.value)}
+              />
+            </label>
             <input
               style={{ ...inputStyle, width: 240, marginBottom: 8, display: 'block' }}
               placeholder="Note (optional)" maxLength={500} value={note}
               onChange={e => setNote(e.target.value)}
             />
-            <button style={btn('#2563eb', '#fff')} onClick={markDone}>Mark serviced now</button>
+            <button style={btn('#2563eb', '#fff')} onClick={markDone}>
+              {serviceDate === todayIso() ? 'Mark serviced today' : `Log service on ${fmtDate(performedAtFor(serviceDate || todayIso()))}`}
+            </button>
           </div>
 
           <div style={{ minWidth: 260 }}>

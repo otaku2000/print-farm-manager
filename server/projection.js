@@ -34,6 +34,7 @@
 // while any real change reshuffles the tie.
 
 const { candidateSql, PROJECTION_COLUMNS } = require('./candidate-query');
+const { filamentsParam } = require('./printer-filaments');
 const { fingerprint } = require('./schedule-state');
 
 // Block length used when neither the G-code nor the part carries an estimate. Blocks that
@@ -165,9 +166,10 @@ function projectSchedule(db, options = {}) {
   const horizonEnd    = now + horizonHours * 3600 * 1000;
   const rng           = mulberry32(seedFromFingerprint(version));
 
+  // SELECT * because the filament set needs type, filament_auto and the manual
+  // loaded_material/loaded_color (server/printer-filaments.js).
   const printers = db.prepare(`
-    SELECT id, name, model, group_name, status, is_held, job_time_remaining,
-           loaded_material, loaded_color
+    SELECT *
     FROM printers WHERE is_active = 1
     ORDER BY COALESCE(group_name, '') COLLATE NOCASE, name COLLATE NOCASE
   `).all();
@@ -274,8 +276,7 @@ function projectSchedule(db, options = {}) {
         printer_id: printer.id,
         model: printer.model,
         group_name: printer.group_name,
-        loaded_material: printer.loaded_material,
-        loaded_color: printer.loaded_color,
+        filaments: filamentsParam(db, printer),
         availableAt,
         seq: 0,
       });
@@ -302,7 +303,7 @@ function projectSchedule(db, options = {}) {
     const skip = [...fullyPlanned];
     for (;;) {
       const row = db.prepare(candidateSql(PROJECTION_COLUMNS, skip.length)).get(
-        lane.model, lane.group_name, lane.loaded_material, lane.loaded_color, ...skip
+        lane.model, lane.group_name, lane.filaments, ...skip
       );
       if (!row) return null;
 

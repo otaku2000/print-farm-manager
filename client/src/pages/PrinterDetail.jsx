@@ -1,5 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { LoadedFilamentPanel } from '../components/LoadedFilament';
+
+// Loaded Material select value meaning "match against the AMS" (filament_auto = 1).
+const AUTO_FILAMENT = '__auto__';
 
 function formatTimestamp(ms) {
   if (!ms) return '—';
@@ -189,7 +193,7 @@ export default function PrinterDetail() {
       serial_number: printer.serial_number || '',
       group_name: printer.group_name || '',
       model: printer.model || '',
-      loaded_material: printer.loaded_material || '',
+      loaded_material: printer.type === 'bambu' && printer.filament_auto ? AUTO_FILAMENT : (printer.loaded_material || ''),
       loaded_color: printer.loaded_color || '',
     });
     setDetailsError(null);
@@ -217,8 +221,14 @@ export default function PrinterDetail() {
           serial_number: detailsDraft.serial_number.trim(),
           group_name: detailsDraft.group_name.trim() || null,
           model: detailsDraft.model,
-          loaded_material: detailsDraft.loaded_material.trim() || null,
-          loaded_color: detailsDraft.loaded_color.trim() || null,
+          // Auto keeps the manual material/color stored, so switching back restores them.
+          ...(detailsDraft.loaded_material === AUTO_FILAMENT
+            ? { filament_auto: 1 }
+            : {
+                loaded_material: detailsDraft.loaded_material.trim() || null,
+                loaded_color: detailsDraft.loaded_color.trim() || null,
+                ...(printer.type === 'bambu' ? { filament_auto: 0 } : {}),
+              }),
         }),
       });
       if (!res.ok) {
@@ -409,16 +419,17 @@ export default function PrinterDetail() {
                   style={{ ...detailInputStyle, cursor: 'pointer' }}
                 >
                   <option value="">— none —</option>
+                  {printer.type === 'bambu' && <option value={AUTO_FILAMENT}>Auto (from AMS)</option>}
                   {filamentTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                 </select>
               </label>
               <label style={detailLabelStyle}>
                 Loaded Color
                 <select
-                  value={detailsDraft.loaded_color}
+                  value={detailsDraft.loaded_material === AUTO_FILAMENT ? '' : detailsDraft.loaded_color}
                   onChange={e => setDetailsDraft(d => ({ ...d, loaded_color: e.target.value }))}
-                  disabled={savingDetails || !detailsDraft.loaded_material}
-                  style={{ ...detailInputStyle, cursor: detailsDraft.loaded_material ? 'pointer' : 'not-allowed' }}
+                  disabled={savingDetails || !detailsDraft.loaded_material || detailsDraft.loaded_material === AUTO_FILAMENT}
+                  style={{ ...detailInputStyle, cursor: detailsDraft.loaded_material && detailsDraft.loaded_material !== AUTO_FILAMENT ? 'pointer' : 'not-allowed' }}
                 >
                   <option value="">— none —</option>
                   {filamentColors
@@ -469,7 +480,12 @@ export default function PrinterDetail() {
             {printer.type && printer.type !== 'prusa' && (
               <span>Connector: <span style={{ color: '#94a3b8' }}>{printer.type}</span></span>
             )}
-            {(printer.loaded_material || printer.loaded_color) && (
+            {printer.type === 'bambu' && printer.filament_auto ? (
+              <span>
+                Loaded:{' '}
+                <span style={{ color: '#7dd3fc' }}>Auto (from AMS)</span>
+              </span>
+            ) : (printer.loaded_material || printer.loaded_color) && (
               <span>
                 Loaded:{' '}
                 <span style={{ color: '#7dd3fc' }}>
@@ -497,6 +513,8 @@ export default function PrinterDetail() {
           </div>
         )}
       </div>
+
+      {printer.type === 'bambu' && printer.is_active !== 0 && <LoadedFilamentPanel printerId={printer.id} />}
 
       {/* Stats card */}
       {stats && (

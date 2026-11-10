@@ -8,6 +8,18 @@ import { signalScheduleDirty } from '../scheduleDirty';
 
 // ── Estimate helpers ──────────────────────────────────────────────────────────
 
+// gcodes.ams_slot value for "pick the slot from the AMS at dispatch" (server: AMS_SLOT_MATCH
+// in server/drivers/bambu-ams.js).
+const AMS_MATCH = '-2';
+
+// Fixed AMS slots to offer (0-based values, shown 1-based like the printer screen): always
+// the four trays of the first AMS, plus any further trays a printer of this model reports.
+function fixedSlotOptions(liveSlots) {
+  const reported = liveSlots.map(s => s.slot).filter(n => Number.isInteger(n) && n >= 0);
+  const top = Math.max(3, ...reported);
+  return Array.from({ length: top + 1 }, (_, i) => i);
+}
+
 function formatDurationForInput(secs) {
   if (!secs) return '';
   const h = Math.floor(secs / 3600);
@@ -58,7 +70,9 @@ function PrinterMatchList({ gcodes, partId }) {
               <div className="match-table" style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1fr) minmax(90px, auto) minmax(110px, auto) 2fr', columnGap: 12, rowGap: 2 }}>
                 {g.printers.map(p => {
                   const st = MATCH_STATE[p.state] || MATCH_STATE.unknown;
-                  const loaded = [p.loaded_material, p.loaded_color].filter(Boolean).join(' / ') || 'nothing set';
+                  const loaded = p.filament_auto
+                    ? p.filament_label
+                    : [p.loaded_material, p.loaded_color].filter(Boolean).join(' / ') || 'nothing set';
                   let next = '';
                   if (p.state === 'ready') {
                     if (!p.next_up) next = '';
@@ -224,7 +238,9 @@ function GcodeUploadPanel({ part, onUploaded, filamentTypes, filamentColors, pro
   const fileInputRef                = useRef(null);
   const [modelOptions, setModelOptions] = useState([]);
   const [amsSlots, setAmsSlots]     = useState([]);
-  const [amsSlot, setAmsSlot]       = useState('');
+  // Bambu filament source, stored as gcodes.ams_slot: AMS_MATCH (pick the slot from the
+  // AMS at dispatch), '-1' (external spool), or '0' and up (a fixed tray).
+  const [amsSlot, setAmsSlot]       = useState(AMS_MATCH);
   const [selectedGroups, setSelectedGroups]   = useState([]);  // [] = all groups (or inherits project)
   const [requiredMaterial, setRequiredMaterial] = useState('');
   const [requiredColor, setRequiredColor]       = useState('');
@@ -234,11 +250,14 @@ function GcodeUploadPanel({ part, onUploaded, filamentTypes, filamentColors, pro
   }, []);
 
   useEffect(() => {
-    if (!model) { setAmsSlots([]); setAmsSlot(''); return; }
+    // Only used to offer fixed slots beyond the first AMS (slot 5 and up) when a printer of
+    // this model has a second unit. The default never depends on one printer's loadout.
+    setAmsSlot(AMS_MATCH);
+    if (!model) { setAmsSlots([]); return; }
     fetch(`/api/printers/ams?model=${encodeURIComponent(model)}`)
       .then(r => r.json())
-      .then(slots => { setAmsSlots(slots); setAmsSlot(''); })
-      .catch(() => { setAmsSlots([]); setAmsSlot(''); });
+      .then(setAmsSlots)
+      .catch(() => setAmsSlots([]));
   }, [model]);
 
   const [parsedEstPrintSecs, setParsedEstPrintSecs] = useState(null);
@@ -281,9 +300,6 @@ function GcodeUploadPanel({ part, onUploaded, filamentTypes, filamentColors, pro
     if (bambuNeedsThreemf)  { setError('Bambu printers require a .3mf file.'); return; }
     if (!partsPerPlate)     { setError('Enter parts per plate.'); return; }
     if (!model)             { setError('Select a printer model.'); return; }
-    if (amsSlots.length > 0 && amsSlot === '') {
-      setError('Select an AMS slot or External Spool.'); return;
-    }
 
     setUploading(true);
     setError(null);
@@ -293,7 +309,7 @@ function GcodeUploadPanel({ part, onUploaded, filamentTypes, filamentColors, pro
     fd.append('part_id', String(part.id));
     fd.append('parts_per_plate', partsPerPlate);
     fd.append('printer_model', model);
-    if (amsSlots.length > 0) fd.append('ams_slot', amsSlot);
+    if (isBambuModel) fd.append('ams_slot', amsSlot);
     if (parsedEstPrintSecs != null) fd.append('est_print_secs', String(parsedEstPrintSecs));
     if (parsedMaterialGrams != null) fd.append('material_grams', String(parsedMaterialGrams));
     if (selectedGroups.length > 0) fd.append('allowed_groups', JSON.stringify(selectedGroups));
@@ -319,7 +335,7 @@ function GcodeUploadPanel({ part, onUploaded, filamentTypes, filamentColors, pro
       if (!ok) {
         setError(data.error || 'Upload failed.');
       } else {
-        setFile(null); setPPP(''); setModel(''); setAmsSlot(''); setAmsSlots([]);
+        setFile(null); setPPP(''); setModel(''); setAmsSlot(AMS_MATCH); setAmsSlots([]);
         setParsedEstPrintSecs(null); setParsedMaterialGrams(null);
         setSelectedGroups([]); setRequiredMaterial(''); setRequiredColor('');
         if (fileInputRef.current) fileInputRef.current.value = '';
@@ -376,19 +392,20 @@ function GcodeUploadPanel({ part, onUploaded, filamentTypes, filamentColors, pro
             {modelOptions.map(m => <option key={m.model_id} value={m.model_id}>{m.label}</option>)}
           </select>
         </div>
-        {amsSlots.length > 0 && (
+        {isBambuModel && (
           <div>
-            <div style={uploadLabelSx}>AMS slot *</div>
+            <div style={uploadLabelSx}>Filament source</div>
             <select
               value={amsSlot}
               onChange={(e) => setAmsSlot(e.target.value)}
-              style={{ ...inputSx, width: 160 }}
+              title="Match from AMS picks the slot holding the right filament on whichever printer gets the job. A fixed slot is checked against the file's filament and moved if it holds the wrong type."
+              style={{ ...inputSx, width: 190 }}
             >
-              <option value="">Select…</option>
-              {amsSlots.map(s => s.slot === -1
-                ? <option key="ext" value="-1">External Spool{s.type ? ` — ${s.type}` : ''}</option>
-                : <option key={s.slot} value={String(s.slot)}>Slot {s.slot} — {s.type || 'unknown'}</option>
-              )}
+              <option value={AMS_MATCH}>Match from AMS</option>
+              <option value="-1">External spool</option>
+              {fixedSlotOptions(amsSlots).map(n => (
+                <option key={n} value={String(n)}>Fixed: AMS slot {n + 1}</option>
+              ))}
             </select>
           </div>
         )}

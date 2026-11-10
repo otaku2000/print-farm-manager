@@ -28,6 +28,7 @@ const ftp      = require('basic-ftp');
 const path     = require('path');
 const tls      = require('tls');
 const tunnel   = require('./bambu-tunnel');
+const ams      = require('./bambu-ams');
 
 // FTP reply when the server cannot create the file. An H2-series printer sends it for an
 // upload to its FTP root when no drive is inserted.
@@ -250,9 +251,62 @@ function getAmsSlots(printer) {
   return slots;
 }
 
+// How long a dispatch waits for a printer's first AMS report. Must exceed an MQTT connect
+// (10 s connectTimeout above) plus the reply to the pushall sent on connect.
+const AMS_REPORT_WAIT_MS = 20000;
+const AMS_REPORT_POLL_MS = 250;
+
+// Resolves once the connection has an AMS report, or after timeoutMs (the caller's mapping
+// step then refuses the dispatch).
+async function waitForAmsReport(conn, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (!Array.isArray(conn.latestPrint?.ams?.ams) && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, AMS_REPORT_POLL_MS));
+  }
+}
+
+// Live loaded filament for display, from the cached MQTT report. Never opens a connection.
+// Returns null until the printer has reported its AMS. Shape:
+//   trays        every AMS tray, empty ones included:
+//                { slot, ams_id, slot_id, type, name, color, remain }
+//                slot is the compound id (ams_id * 4 + slot_id); type is the generic
+//                tray_type ("PETG") and name the product (tray_sub_brands, "PETG HF"),
+//                falling back to type for spools without one; both null when empty;
+//                color is RRGGBB or null; remain is percent left (0 to 100), or null when
+//                the printer does not know. Read from live H2S/H2D reports: remain is
+//                -1 for a spool without a Bambu RFID tag.
+//   external     the external spool { type, color } when one is loaded, else null
+//   active_slot  tray currently feeding (tray_now): a slot, -1 for the external spool,
+//                null when none (OpenBambuAPI: 254 = external, 255 = none)
+function getLoadedFilament(printer) {
+  const conn = connections.get(printer.id);
+  const trays = ams.liveTrays(conn?.latestPrint);
+  if (!trays) return null;
+
+  const report = conn.latestPrint;
+  const vt = report.vt_tray;
+  const trayNow = parseInt(report.ams?.tray_now, 10);
+  let activeSlot = null;
+  if (trayNow === 254) activeSlot = -1;
+  else if (Number.isInteger(trayNow) && trayNow >= 0 && trayNow < 254) activeSlot = trayNow;
+
+  return {
+    trays: trays.map(t => ({
+      slot: t.tray, ams_id: t.amsId, slot_id: t.slotId,
+      type: t.type || null,
+      name: t.type ? (t.subBrand || t.type) : null,
+      color: t.type ? t.color : null,
+      remain: t.type && Number.isInteger(t.remain) && t.remain >= 0 && t.remain <= 100 ? t.remain : null,
+    })),
+    external: vt?.tray_type ? { type: vt.tray_type, color: vt.tray_color ? String(vt.tray_color).slice(0, 6).toUpperCase() : null } : null,
+    active_slot: activeSlot,
+  };
+}
+
 // Uploads the G-code file to the printer via FTPS, then triggers printing via MQTT.
 // gcodeFullPath must be a resolved absolute path that already exists on disk.
-// options.amsSlot: -1 = external spool, 0–N = AMS slot, null = default (external)
+// options.amsSlot: -1 or null = external spool, 0 to N = a fixed AMS tray (checked against
+// the sliced file's filament), -2 = match a tray from the AMS by that filament (bambu-ams.js)
 async function uploadAndPrint(printer, gcodeFullPath, _filename, options = {}) {
   const { amsSlot = null } = options;
   if (!printer.serial_number) {
@@ -273,22 +327,31 @@ async function uploadAndPrint(printer, gcodeFullPath, _filename, options = {}) {
     );
   }
 
+  // Resolve the AMS mapping before uploading, so a printer without the filament the plate
+  // needs is refused without a wasted transfer. Layout and sources: bambu-ams.js.
+  // A dispatch right after recommission arrives on a brand new MQTT connection that has not
+  // received its first report yet, so wait for the AMS contents instead of guessing.
+  const conn = getOrCreateConnection(printer);
+  const plate = ams.readPlateFilaments(gcodeFullPath);
+  if (ams.needsAmsReport(amsSlot, plate)) {
+    await waitForAmsReport(conn, options.amsReportWaitMs ?? AMS_REPORT_WAIT_MS);
+  }
+  const mapping = ams.buildAmsMapping({
+    printerName: printer.name,
+    amsSlot,
+    plate,
+    latestPrint: conn.latestPrint,
+  });
+  if (mapping.note) console.log(`[bambu] ${printer.name}: ${mapping.note}`);
+
   const usedInternalStorage = await uploadToPrinter(printer, gcodeFullPath, onPrinterFilename);
 
   // ── MQTT print trigger ───────────────────────────────────────────────────
-  const conn = getOrCreateConnection(printer);
-
   if (!conn.connected) {
     throw new Error(`Bambu printer ${printer.name} MQTT not connected — cannot trigger print`);
   }
 
-  // ams_mapping format for LAN printing: a flat array where index = filament slot
-  // in the .3mf (0-based) and value = physical AMS tray ID (0-15).
-  // For single-color prints: [amsSlot] (one element).
-  // For external spool or no AMS: [] (empty).
-  // Ref: https://github.com/Doridian/OpenBambuAPI (issue #38 + mqtt.md)
   const subtaskName = path.basename(onPrinterFilename, '.3mf');
-  const useAms      = amsSlot != null && amsSlot >= 0;
   const printPayload = {
     sequence_id:     '0',
     command:         'project_file',
@@ -304,8 +367,9 @@ async function uploadAndPrint(printer, gcodeFullPath, _filename, options = {}) {
     flow_cali:       false,
     vibration_cali:  true,
     layer_inspect:   false,
-    use_ams:         useAms,
-    ams_mapping:     useAms ? [amsSlot] : [],
+    use_ams:         mapping.useAms,
+    ams_mapping:     mapping.amsMapping,
+    ...(mapping.amsMapping2 ? { ams_mapping2: mapping.amsMapping2 } : {}),
     profile_id:      '0',
     project_id:      '0',
     subtask_id:      '0',
@@ -468,4 +532,4 @@ async function checkIfPrinting(printer) {
   return status === 'PRINTING' || status === 'PAUSED';
 }
 
-module.exports = { getStatus, uploadAndPrint, cancelJob, checkIfPrinting, getAmsSlots, deleteFile, dropConnection, openDataConnection };
+module.exports = { getStatus, uploadAndPrint, cancelJob, checkIfPrinting, getAmsSlots, getLoadedFilament, deleteFile, dropConnection, openDataConnection };

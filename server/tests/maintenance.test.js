@@ -128,6 +128,32 @@ describe('POST /api/maintenance/:id/done', () => {
     expect(bad.status).toBe(400);
   });
 
+  test('next_due_at is the last service plus the day interval, following overrides', async () => {
+    const id = addPrinter('A', 200);
+    const serviced = Date.now() - 10 * DAY;
+    await request(app).post(`/api/maintenance/${id}/done`).send({ performed_at: serviced });
+    expect((await statusOf(id)).next_due_at).toBe(serviced + 90 * DAY);
+    await request(app).put(`/api/maintenance/${id}/intervals`).send({ interval_days: 30 });
+    expect((await statusOf(id)).next_due_at).toBe(serviced + 30 * DAY);
+  });
+
+  test('next_due_at counts from when the printer was added if never serviced', async () => {
+    const id = addPrinter('A', 100);
+    const s = await statusOf(id);
+    expect(s.next_due_at).toBe(s.since + 90 * DAY);
+    expect(s.next_due_at).toBeLessThan(Date.now()); // 100 days old, so already past due
+  });
+
+  test('back-filling an older date from the calendar does not replace a newer service', async () => {
+    const id = addPrinter('A', 200);
+    const recent = Date.now() - 5 * DAY;
+    await request(app).post(`/api/maintenance/${id}/done`).send({ performed_at: recent });
+    await request(app).post(`/api/maintenance/${id}/done`).send({ performed_at: Date.now() - 60 * DAY });
+    const s = await statusOf(id);
+    expect(s.last_performed_at).toBe(recent);
+    expect(s.days_since).toBeCloseTo(5, 0);
+  });
+
   test('404 for an unknown printer', async () => {
     expect((await request(app).post('/api/maintenance/999/done').send({})).status).toBe(404);
   });

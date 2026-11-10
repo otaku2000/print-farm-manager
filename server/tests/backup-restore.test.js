@@ -49,7 +49,8 @@ beforeEach(() => {
       job_time_remaining  INTEGER,
       serial_number       TEXT DEFAULT '',
       loaded_material     TEXT,
-      loaded_color        TEXT
+      loaded_color        TEXT,
+      filament_auto       INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE projects (
       id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,10 +145,10 @@ beforeEach(() => {
   db.prepare(`
     INSERT INTO printers
       (name, ip, api_key, group_name, type, model, status, is_held, is_active, created_at,
-       serial_number, loaded_material, loaded_color)
+       serial_number, loaded_material, loaded_color, filament_auto)
     VALUES
       ('Bambu_01', '192.168.1.50', 'ac1B2c', 'Bambu Farm', 'bambu', 'x1c', 'IDLE', 0, 1, ?,
-       '01S00A123456789', 'PLA', 'Galaxy Black')
+       '01S00A123456789', 'PLA', 'Galaxy Black', 1)
   `).run(now);
 
   db.prepare(`
@@ -206,6 +207,7 @@ describe('Backup export/restore — column round-trip regression', () => {
       serial_number: '01S00A123456789',
       loaded_material: 'PLA',
       loaded_color: 'Galaxy Black',
+      filament_auto: 1,
     });
     expect(res.body.projects[0]).toMatchObject({
       required_material: 'PETG',
@@ -233,7 +235,7 @@ describe('Backup export/restore — column round-trip regression', () => {
     try {
       // Wipe the columns under test so a false-positive (restore is a no-op / DB untouched)
       // can't slip through — restore must be what puts these values back.
-      db.prepare("UPDATE printers SET serial_number = '', loaded_material = NULL, loaded_color = NULL").run();
+      db.prepare("UPDATE printers SET serial_number = '', loaded_material = NULL, loaded_color = NULL, filament_auto = 0").run();
       db.prepare("UPDATE projects SET required_material = NULL, required_color = NULL, allowed_groups = NULL").run();
       db.prepare("UPDATE parts SET print_time_seconds = NULL, material_grams = NULL").run();
       db.prepare("UPDATE gcodes SET ams_slot = NULL, material_grams = NULL, allowed_groups = NULL, required_material = NULL, required_color = NULL").run();
@@ -258,6 +260,7 @@ describe('Backup export/restore — column round-trip regression', () => {
       const part = db.prepare('SELECT * FROM parts WHERE id = 1').get();
       expect(part.print_time_seconds).toBe(7350);
       expect(part.material_grams).toBe(42.5);
+      expect(printer.filament_auto).toBe(1);
 
       const gcode = db.prepare('SELECT * FROM gcodes WHERE id = 1').get();
       expect(gcode.ams_slot).toBe(2);

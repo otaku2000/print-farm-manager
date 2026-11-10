@@ -2,6 +2,113 @@
 
 ---
 
+## 2026-11-10: Filament source on G-code upload: match from AMS by default
+
+The Bambu G-code upload form required an AMS slot, numbered from 0 ("Slot 3" meant the printer's slot 4), with the loadout of whichever printer of that model the server found first. That fixed slot then went to every printer of the model, which is how a PETG plate was sent to a PET-CF tray on an H2S loaded differently from its sibling. The slot picker is now a **Filament source** dropdown: "Match from AMS" (default), "External spool", or "Fixed: AMS slot N" numbered as on the printer screen.
+
+Match from AMS is stored as `ams_slot = -2` (no schema change). At dispatch an Auto filament printer that matched the part's required material and color still prints from that spool's slot. Otherwise the Bambu driver picks the tray holding the sliced file's filament type, preferring its color, and refuses before uploading if no tray has it or the file does not say. The upload API now rejects an `ams_slot` that is not -2, -1, or a whole number from 0.
+
+Hardware status: tested against mocks only; no print has been dispatched with match from AMS on a real printer yet. Existing G-codes keep their fixed slots.
+
+### Changes
+- `server/drivers/bambu-ams.js`: `AMS_SLOT_MATCH` (-2) and a match mode in `chooseTray`/`buildAmsMapping`; `needsAmsReport` covers it.
+- `server/drivers/bambu.js`: `options.amsSlot` documents -2.
+- `server/routes/gcodes.js`: validates `ams_slot` on upload.
+- `client/src/pages/Projects.jsx`: Filament source dropdown replaces the required slot picker; fixed slots shown 1-based.
+- `server/tests/bambu-ams.test.js`, `server/tests/bambu-driver.test.js`, `server/tests/gcodes.test.js`, `server/tests/auto-filament.test.js`: match mode, validation, and dispatch with -2.
+- `docs/api.md`, `docs/database.md`, `docs/multi-brand.md`, `docs/filaments.md`, `docs/web-app.md`: documented.
+
+## 2026-11-10: Auto filament when adding a printer
+
+Auto (from AMS) could only be turned on after a printer existed, from its Edit form or bulk edit. The Settings Add Printer form now offers it in Loaded Material when the brand is Bambu, and `POST /api/printers` accepts `filament_auto` with the same rules as `PUT` (Bambu only, 0 or 1, default 0). The validation is one shared function, so create and update cannot disagree.
+
+### Changes
+- `server/routes/printers.js`: `parseFilamentAuto` (new) shared by `POST` and `PUT`; `POST` writes `filament_auto` in the same transaction as the insert.
+- `client/src/pages/Settings.jsx`: "Auto (from AMS)" in the Add Printer Loaded Material dropdown for Bambu; cleared when the brand changes.
+- `server/tests/printers-loaded-filament.test.js`: create in Auto, default manual, and rejection with nothing created.
+- `docs/api.md`, `docs/web-app.md`, `docs/filaments.md`: documented.
+
+## 2026-11-10: Next service date on the Maintenance page
+
+Operators asked to see when each printer is next due, not just when it was last serviced. `GET /api/maintenance` now returns `next_due_at`: the last service (or the date the printer was added) plus its day interval, including a per-printer override. Each row on the Maintenance page shows it next to the last service date, with "in N days" or "N days overdue", amber within 14 days and red once passed. It covers the day interval only; the print-hour limit can come due sooner and still raises the overdue warning as before.
+
+### Changes
+- `server/routes/maintenance.js`: `next_due_at` in each printer's status.
+- `client/src/pages/Maintenance.jsx`: next service date, countdown, and color on each row.
+- `server/tests/maintenance.test.js`: next due date with the default, with an override, and for a printer never serviced.
+- `docs/api.md`, `docs/web-app.md`: documented.
+
+## 2026-11-10: Maintenance page date picker for the last service
+
+The Maintenance page could only log a service as "now", so a printer serviced last week, or before the farm started tracking it, restarted its counters from the wrong day. Each printer's service form now has a "Last maintained on" calendar picker. It defaults to today and blocks future dates. Today logs the current time; an earlier day logs local midnight of that day, so print hours from later that day count toward the next interval (erring toward servicing early). Back-filling an older date never replaces a newer logged service, because status always uses the most recent `performed_at`. The API already accepted `performed_at`; only the page changed.
+
+### Changes
+- `client/src/pages/Maintenance.jsx`: date picker on the service form, sent as `performed_at`.
+- `server/tests/maintenance.test.js`: back-filling an older date keeps the newer service as current.
+- `docs/web-app.md`: documented.
+
+## 2026-11-10: Auto filament for Bambu printers with an AMS
+
+Every printer's Loaded Material and Color were typed in by an operator and could be wrong as soon as a spool was swapped. A Bambu printer with an AMS already reports exactly what is loaded. A Bambu printer can now be set to Loaded Material "Auto (from AMS)" (`printers.filament_auto`), and it then matches parts against every spool its AMS reports: a part needing PETG HF / Black goes to any Auto printer with a black PETG HF spool in any slot, and the print uses that slot.
+
+The candidate query now matches a part's requirement against a printer's filament set (a JSON list bound into `json_each`) instead of two single values. A manual printer's set is its one typed-in pair, which is the same equality check as before; every existing targeting test passes unchanged. Spool colors are named by the nearest library color with a hex within an RGB distance of 150, so library colors need a hex to be matched in Auto (the farm's "Black" entries had none). Because loading a spool is not a status change, the scheduler re-checks idle Auto printers after each poll when their AMS contents change.
+
+Hardware status: the AMS fields this reads (product name, type, hex color) were read from live H2S and H2D reports. Matching, slot choice, and the re-check have been tested against mocks only; no print has yet been dispatched to an Auto printer.
+
+### Changes
+- `server/printer-filaments.js` (new): builds a printer's filament set (manual pair, or live AMS spools named from the library), plus the JS mirror used by diagnostics.
+- `server/candidate-query.js`: filament predicate matches against the set; `SCHEDULER_COLUMNS` adds the effective required material and color.
+- `server/scheduler.js`: binds the set, prints from the matched AMS slot for Auto printers, and re-checks idle Auto printers when their AMS changes.
+- `server/projection.js`, `server/routes/parts.js`, `server/schedule-state.js`: use the same set (sync pair with the candidate query); diagnostics add `filament_auto` and `filament_label`; fingerprint version v2.
+- `server/db.js`: additive `printers.filament_auto` column (default 0).
+- `server/routes/printers.js`: `PUT /api/printers/:id` accepts `filament_auto` (Bambu only).
+- `client/src/pages/PrinterDetail.jsx`, `Printers.jsx`, `Fleet.jsx`, `PrintQueue.jsx`, `Projects.jsx`: Auto option in the edit form and bulk edit, and "Auto" shown where loaded filament is displayed.
+- `server/tests/auto-filament.test.js` (new), `server/tests/printers-loaded-filament.test.js`, `server/tests/backup-restore.test.js`: filament set, color naming, dispatch and slot choice, re-check, the PUT field, and backup round trip of the new column.
+- `docs/filaments.md`, `docs/api.md`, `docs/web-app.md`: documented.
+
+## 2026-11-10: Spool levels and loaded filament on the Printer Detail view
+
+Operators asked to see each printer's AMS contents on its own page as well as the list, and how much filament each spool has left. Bambu printers report `remain` (percent left) per tray, but only for spools with a Bambu RFID tag; a third-party spool reports -1. The AMS data now carries the product name (`tray_sub_brands`, such as "PETG HF") and the level, the Printers list chips show the percent, and the Printer Detail view has a live card with a level bar per tray.
+
+Hardware status: the fields were read from live H2S and H2D reports (RFID spools with levels, a third-party PET-CF spool at -1, and an empty tray). The page was checked in a browser against the running farm.
+
+### Changes
+- `server/drivers/bambu-ams.js`, `server/drivers/bambu.js`: trays carry `name` and `remain`.
+- `server/routes/printers.js`: `GET /api/printers/:id/loaded-filament` (new).
+- `client/src/components/LoadedFilament.jsx` (new): list chips and the detail card, shared by both pages.
+- `client/src/pages/Printers.jsx`, `client/src/pages/PrinterDetail.jsx`: use it.
+- `server/tests/printers-loaded-filament.test.js`, `server/tests/bambu-driver.test.js`: new fields and the per-printer endpoint.
+- `docs/api.md`, `docs/web-app.md`: documented.
+
+## 2026-11-10: Printers page shows each Bambu printer's loaded filament
+
+After an H2S loaded the wrong filament, the operator had no way to see in the app what each printer's AMS actually held, only the Material field they had typed in. Each active Bambu row on the Printers page now has a line of tray chips (color, slot number, type or "empty", and an outline on the tray feeding now), refreshed every 15 s from the driver's cached MQTT report. It is read-only: it changes neither the Material field nor scheduler matching.
+
+Hardware status: the data comes from the same AMS report the driver reads at dispatch, which was read from two H2S printers. The page itself has been checked in a browser against the running farm.
+
+### Changes
+- `server/drivers/bambu.js`: `getLoadedFilament` (new) returns every tray, the external spool, and the active tray from the cached report, without opening a connection.
+- `server/routes/printers.js`: `GET /api/printers/loaded-filament` (new), declared before `/:id`.
+- `client/src/pages/Printers.jsx`: loaded-filament line under each Bambu row, polled every 15 s.
+- `server/tests/printers-loaded-filament.test.js` (new), `server/tests/bambu-driver.test.js`: endpoint and driver coverage.
+- `docs/api.md`, `docs/web-app.md`: endpoint and page documentation.
+
+## 2026-11-10: Bambu AMS mapping follows the sliced file and the printer's live AMS
+
+An H2S paused right after dispatch with "Failed to get AMS mapping table; please select Resume to retry" (HMS 0700_8012). The plate printed with project filament 2, but the driver always sent `ams_mapping: [slot]`, which maps filament 1 and leaves filament 2 unmapped. The G-code's slot was also chosen once per printer model, and on that printer it held PET-CF where the file needed PETG, while a sibling H2S had PETG in that slot.
+
+The driver now reads plate 1's filament from `Metadata/slice_info.config` and the project filament count from `Metadata/project_settings.config`, and builds `ams_mapping` (one entry per project filament, -1 for unused) and `ams_mapping2` (`{ams_id, slot_id}`, 255/255 for unused) the way Bambu Studio's `get_ams_mapping_result` does (bambulab/BambuStudio, `src/slic3r/GUI/SelectMachine.cpp`). It keeps the configured slot only when the printer's live AMS report shows the right filament type there (an empty tray does not count). Otherwise it moves to a tray with that type, preferring the same color, and logs the change. If no tray has the type, or the printer has not reported its AMS within 20 s, it refuses before uploading, so the scheduler's usual upload-failure path holds the printer for an operator. Plates that use more than one filament are refused the same way, since a G-code carries only one slot. Files without slice info keep the old `[slot]` mapping.
+
+The first version of this fix trusted the configured slot when no AMS report had arrived yet. Recommissioning the H2S dropped its MQTT connection and dispatched at once, so the fix sent slot 4 (PET-CF) for the PETG plate and the printer loaded the wrong filament before the operator stopped it. The driver now waits for the report and never falls back to the configured slot without one.
+
+Hardware status: the cause was confirmed on hardware (the paused H2S's AMS report and the job's sliced file). The filament-index layout went out to a real H2S, which accepted it and started loading, but the tray it named was the wrong one (the fallback described above). Correct slot selection on a real printer is not yet validated.
+
+### Changes
+- `server/drivers/bambu-ams.js` (new): reads the plate's filament from the sliced file and builds both mapping arrays against the live AMS report.
+- `server/drivers/bambu.js`: `uploadAndPrint` resolves the mapping before uploading and sends `ams_mapping2`.
+- `server/tests/bambu-ams.test.js` (new), `server/tests/bambu-driver.test.js`: filament index, unused padding, slot reassignment, color preference, no-match and multi-filament refusal, and no upload on refusal.
+- `docs/multi-brand.md`: documents the AMS mapping.
+
 ## 2026-11-10: Bambu uploads to internal storage over port 6000
 
 An H2-series printer with no USB drive refuses FTPS uploads with `553 Could not create file`, while Bambu Studio can still send to it. Captures of Studio showed it hitting the same 553 on an H2S and then uploading over the file service on TCP 6000. The driver now does the same: FTPS first, and on a 553 only, port 6000 to internal storage. Every other FTPS outcome behaves as before.
