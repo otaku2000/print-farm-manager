@@ -2,6 +2,29 @@
 
 ---
 
+## 2026-11-10: Bambu uploads to internal storage over port 6000
+
+An H2-series printer with no USB drive refuses FTPS uploads with `553 Could not create file`, while Bambu Studio can still send to it. Captures of Studio showed it hitting the same 553 on an H2S and then uploading over the file service on TCP 6000. The driver now does the same: FTPS first, and on a 553 only, port 6000 to internal storage. Every other FTPS outcome behaves as before.
+
+The protocol is unpublished. This was written from the `ClusterM/open-bamboo-networking` notes and captures of Bambu Studio, with no code taken from that project. Hardware status: on an H2S and an H2D with no drive, a sliced file uploaded this way and the printer accepted the `brtc://emmc/<name>` print command and began printing. Completion of those prints is not yet confirmed, and other models are not validated. A second H2D refuses the port 6000 TLS handshake, including from Bambu Studio, for an unknown reason, so it needs a USB drive.
+
+### Changes
+- `server/drivers/bambu-tunnel.js` (new): port 6000 login, session setup, storage check and chunked upload.
+- `server/drivers/bambu.js`: `uploadToPrinter` picks the route, and the print command uses the internal storage URL after a port 6000 upload.
+- `server/tests/bambu-tunnel.test.js` (new), `server/tests/bambu-driver.test.js`: framing, chunking, failure handling and route selection.
+- `docs/multi-brand.md`: documents the fallback and per-printer validation status.
+
+## 2026-11-10: Bambu FTPS uploads fail with "session reuse required"
+
+Uploads to an H2D failed with `522 SSL connection failed: session reuse required` even though the same printer accepted files from Bambu Studio. A packet capture of both showed Studio's data connection resuming the control connection's TLS session and ours offering no session at all. basic-ftp wraps an already-open socket in TLS, and on Node 22 that socket does not offer the session. A direct `tls.connect` with the same session does. The driver now opens the data connection that way for uploads.
+
+Hardware status: the direct connection uploaded, listed and deleted 1 KB and 2 MB test files on an H2D with a USB drive inserted. A full print started through the driver on the same printer afterward. Without a drive the same uploads get `553 Could not create file`. Not yet validated on other Bambu models.
+
+### Changes
+- `server/drivers/bambu.js`: `openDataConnection` (new) replaces basic-ftp's passive setup during `uploadAndPrint`.
+- `server/tests/bambu-driver.test.js`: covers session reuse, the control host, bad PASV replies, connection errors and the connect timeout.
+- `docs/multi-brand.md`: documents FTPS session reuse and the H2D USB drive behavior.
+
 ## 2026-11-06: Printer maintenance warnings
 
 Operators had no way to see when a printer was due for upkeep. A new Maintenance page flags any printer that reaches 90 days or 2000 print hours since its last logged service (or since it was added, if none is logged). Both limits are editable farm-wide, and either can be overridden per printer. The Fleet page shows a banner with the count and a "Service due" tag on each affected card. Warnings only: nothing here changes dispatch, holds, or any path that credits `completed_qty`.

@@ -59,6 +59,24 @@ Both brands map their native states to a shared internal set. The rest of the sy
 
 Reference: ha-bambulab `pybambu/models.py` cancel handling. Without this, a Bambu stopped from its own screen shows a persistent false ERROR in the farm that decommission/recommission cannot clear (status always comes from the live MQTT report, not the DB).
 
+### Bambu FTPS uploads
+
+Uploads go to implicit FTPS on port 990 (user `bblp`, LAN access code) in passive mode. The printer's FTP server (vsftpd 3.0.5 on an H2D) requires the data connection to resume the control connection's TLS session and answers `522 SSL connection failed: session reuse required` otherwise. The driver's `openDataConnection` replaces basic-ftp's passive setup for this reason: basic-ftp wraps an already-open socket in TLS, and on Node 22 that socket does not offer the session, while a direct `tls.connect` does.
+
+With a USB drive inserted on an H2-series printer, the FTP root is the drive. With no drive, the root lists as empty and uploads fail with `553 Could not create file`.
+
+On a 553 the driver falls back to the file service on TCP 6000 (`server/drivers/bambu-tunnel.js`), which writes to internal storage (`emmc`), then starts the print with the URL `brtc://emmc/<name>`. Bambu Studio falls back in the same order. Bambu has not published this protocol: the implementation follows the notes at `ClusterM/open-bamboo-networking` and packet captures of Bambu Studio. Developer Mode is still required, because the print command is unsigned MQTT.
+
+Validation status:
+
+| Printer | FTPS with drive | Print started after FTPS | Port 6000 upload | Print started after port 6000 |
+|---|---|---|---|---|
+| H2D (first unit) | Validated | Validated | Printer refuses the TLS handshake, also from Bambu Studio (cause unknown) | Not possible |
+| H2D (second unit) | Not tested | Not tested | Validated | Validated: printer accepted the command and began printing (completion not yet confirmed) |
+| H2S | Not tested | Not tested | Validated | Validated: printer accepted the command and began printing (completion not yet confirmed) |
+
+Other Bambu models have not been validated on either route.
+
 ---
 
 ## Connector Families
