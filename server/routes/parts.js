@@ -6,6 +6,7 @@ const router  = express.Router();
 
 const { normalizePrintTime } = require('../estimate-input');
 const { candidateSql, PROJECTION_COLUMNS } = require('../candidate-query');
+const printerFilaments = require('../printer-filaments');
 const { fingerprint } = require('../schedule-state');
 
 const GCODE_DIR = path.join(__dirname, '..', 'gcode');
@@ -69,11 +70,11 @@ module.exports = (db, scheduler = null) => {
   // (server/candidate-query.js, so this cannot drift from dispatch), skipping parts whose
   // in-progress jobs already cover the remaining quantity, exactly as _reserveJob's
   // ceiling check does. Read-only: no probe job is written.
-  function nextUpFor(printer) {
+  function nextUpFor(printer, filaments) {
     const skip = [];
     while (true) {
       const row = db.prepare(candidateSql(PROJECTION_COLUMNS, skip.length)).get(
-        printer.model, printer.group_name, printer.loaded_material, printer.loaded_color, ...skip
+        printer.model, printer.group_name, JSON.stringify(filaments), ...skip
       );
       if (!row) return null;
       const remaining = Math.max(0, row.target_qty - row.completed_qty);
@@ -93,13 +94,21 @@ module.exports = (db, scheduler = null) => {
       "SELECT DISTINCT printer_id FROM jobs WHERE status IN ('uploading', 'printing')"
     ).all().map(r => r.printer_id));
     const nextUpCache = new Map();
-    return {
+    const filamentCache = new Map();
+    const ctx = {
       busyPrinterIds,
+      // The printer's filament set, the same one the scheduler binds (manual values, or
+      // the live AMS spools of an Auto printer).
+      filaments(printer) {
+        if (!filamentCache.has(printer.id)) filamentCache.set(printer.id, printerFilaments.printerFilaments(db, printer));
+        return filamentCache.get(printer.id);
+      },
       nextUp(printer) {
-        if (!nextUpCache.has(printer.id)) nextUpCache.set(printer.id, nextUpFor(printer));
+        if (!nextUpCache.has(printer.id)) nextUpCache.set(printer.id, nextUpFor(printer, ctx.filaments(printer)));
         return nextUpCache.get(printer.id);
       },
     };
+    return ctx;
   }
 
   // One printer's standing against one G-code's targeting. States are checked in the
@@ -108,8 +117,7 @@ module.exports = (db, scheduler = null) => {
   function describePrinter(ctx, p, partId, { requiredMaterial, requiredColor, allowedGroups }) {
     let state;
     if (allowedGroups && !allowedGroups.includes(p.group_name))          state = 'wrong_group';
-    else if ((requiredMaterial && p.loaded_material !== requiredMaterial) ||
-             (requiredColor    && p.loaded_color    !== requiredColor))  state = 'wrong_filament';
+    else if (!printerFilaments.matchesRequirement(ctx.filaments(p), requiredMaterial, requiredColor)) state = 'wrong_filament';
     else if (p.is_held === 1)                                            state = 'held';
     else if (!isDispatchReady(p) || ctx.busyPrinterIds.has(p.id))        state = 'busy';
     else                                                                 state = 'ready';
@@ -136,6 +144,8 @@ module.exports = (db, scheduler = null) => {
       group_name:      p.group_name,
       loaded_material: p.loaded_material,
       loaded_color:    p.loaded_color,
+      filament_auto:   printerFilaments.isAuto(p) ? 1 : 0,
+      filament_label:  printerFilaments.describeFilaments(p, ctx.filaments(p)),
       state,
       next_up:         nextUp,
     };
@@ -216,12 +226,11 @@ module.exports = (db, scheduler = null) => {
       }
 
       const materialOk = groupOk.filter(p =>
-        (!requiredMaterial || p.loaded_material === requiredMaterial) &&
-        (!requiredColor    || p.loaded_color    === requiredColor)
+        printerFilaments.matchesRequirement(ctx.filaments(p), requiredMaterial, requiredColor)
       );
       if (materialOk.length === 0) {
         const want = [requiredMaterial, requiredColor].filter(Boolean).join(' / ');
-        detail.mismatch = `${gc.filename}: no printer has ${want} loaded (set it on the printer's detail page)`;
+        detail.mismatch = `${gc.filename}: no printer has ${want} loaded (set it on the printer's detail page, or load it in an Auto printer's AMS)`;
         notes.push(detail.mismatch);
         continue;
       }

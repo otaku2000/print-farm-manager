@@ -160,7 +160,9 @@ function PrinterCard({ printer, selected, onToggleSelect, onSetReady, onBadPrint
           {printer.model}
         </span>
         {printer.group_name && <span style={{ color: '#475569' }}>{printer.group_name}</span>}
-        {(printer.loaded_material || printer.loaded_color) && (
+        {printer.type === 'bambu' && printer.filament_auto ? (
+          <span style={{ color: '#7dd3fc', fontSize: 11 }}>Auto (AMS)</span>
+        ) : (printer.loaded_material || printer.loaded_color) && (
           <span style={{ color: '#7dd3fc', fontSize: 11 }}>
             {[printer.loaded_material, printer.loaded_color].filter(Boolean).join(' · ')}
           </span>

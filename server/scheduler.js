@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { getDriver } = require('./drivers');
 const { candidateSql, SCHEDULER_COLUMNS } = require('./candidate-query');
+const printerFilaments = require('./printer-filaments');
 const notifications = require('./notifications');
 const events = require('./events');
 const partLedger = require('./partLedger');
@@ -41,6 +42,14 @@ class JobScheduler extends EventEmitter {
     // with it and pushing peak concurrency past dispatch_batch_size.
     this.poller.on('printerIdle', ({ printer }) => {
       this.scheduleForPrinter(printer);
+    });
+
+    this.poller.on('pollComplete', () => {
+      try {
+        this._recheckAutoFilamentPrinters();
+      } catch (err) {
+        console.error('[scheduler] Auto filament re-check failed:', err.message);
+      }
     });
 
     this.poller.on('statusChange', ({ printer, newStatus }) => {
@@ -165,6 +174,34 @@ class JobScheduler extends EventEmitter {
       }
     } finally {
       this._isSweeping = false;
+    }
+  }
+
+  // An idle Auto-filament printer that found no work stays idle until something dispatches
+  // it, and loading a new spool is not a status change, so nothing would. After each poll,
+  // dispatch any such printer whose AMS contents changed since the last poll. The first
+  // sighting only records the contents: the startup sweep and printerIdle already cover it.
+  _recheckAutoFilamentPrinters() {
+    if (!this._autoFilamentSeen) this._autoFilamentSeen = new Map();
+    const rows = this.db.prepare(
+      "SELECT * FROM printers WHERE is_active = 1 AND type = 'bambu' AND filament_auto = 1"
+    ).all();
+    const live = new Set();
+    for (const row of rows) {
+      live.add(row.id);
+      const signature = JSON.stringify(printerFilaments.printerFilaments(this.db, row));
+      const previous = this._autoFilamentSeen.get(row.id);
+      this._autoFilamentSeen.set(row.id, signature);
+      if (previous === undefined || previous === signature) continue;
+      const dispatchable = !row.is_held &&
+        (row.status === 'IDLE' || row.status === 'FINISHED' || row.status === 'STOPPED');
+      if (dispatchable) {
+        console.log(`[scheduler] ${row.name} AMS contents changed, checking for work`);
+        this.scheduleForPrinter(row);
+      }
+    }
+    for (const id of this._autoFilamentSeen.keys()) {
+      if (!live.has(id)) this._autoFilamentSeen.delete(id);
     }
   }
 
@@ -313,11 +350,17 @@ class JobScheduler extends EventEmitter {
     let jobId = null;
     let gcodeFullPath = null;
 
+    // What this printer can print with: its manual loaded material/color, or for an Auto
+    // Bambu printer every spool its AMS reports right now (server/printer-filaments.js).
+    // Read from a fresh row: the printer object passed in may predate a settings change.
+    const printerRow = this.db.prepare('SELECT * FROM printers WHERE id = ?').get(printer.id) || printer;
+    const filamentSet = printerFilaments.printerFilaments(this.db, printerRow);
+
     while (true) {
       // Eligibility rules and priority ordering live in server/candidate-query.js so the
       // schedule projection asks the identical question without a second copy to drift.
       candidate = this.db.prepare(candidateSql(SCHEDULER_COLUMNS, skippedPartIds.length))
-        .get(printer.model, printer.group_name, printer.loaded_material, printer.loaded_color, ...skippedPartIds);
+        .get(printer.model, printer.group_name, JSON.stringify(filamentSet), ...skippedPartIds);
 
       if (!candidate) {
         console.log(`[scheduler] No candidate found for ${printer.name} (model: ${printer.model}) — no open parts with matching G-code in an active project`);
@@ -378,6 +421,14 @@ class JobScheduler extends EventEmitter {
 
       // Candidate has room and file exists — proceed with upload
       break;
+    }
+
+    // An Auto printer matched this part through one particular AMS spool: print from that
+    // slot rather than the one saved on the G-code, which was chosen for another printer.
+    const matchedSlot = printerFilaments.findSlot(filamentSet, candidate.required_material, candidate.required_color);
+    if (printerFilaments.isAuto(printerRow) && matchedSlot != null && matchedSlot !== candidate.ams_slot) {
+      console.log(`[scheduler] ${printer.name} (Auto filament): printing from AMS slot ${matchedSlot + 1}, the spool that matched ${[candidate.required_material, candidate.required_color].filter(Boolean).join(' / ')}`);
+      candidate.ams_slot = matchedSlot;
     }
 
     return { jobId, candidate, driver, gcodeFullPath };

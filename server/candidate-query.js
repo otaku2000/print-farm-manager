@@ -21,8 +21,14 @@
 // explain them one part at a time, and GET /api/parts/queue reuses that mirror plus this
 // ORDER BY to list the whole queue; if the rules here change, both change with them.
 
-// Bind order for every query built here: printer model, printer group, loaded material,
-// loaded color, then one parameter per excluded part id.
+// Bind order for every query built here: printer model, printer group, the printer's
+// filament set as JSON (filamentsParam in server/printer-filaments.js), then one parameter
+// per excluded part id.
+//
+// The filament predicate passes when the part has no material or color requirement, or
+// when ANY entry of the set meets both. A manual printer's set is its single
+// loaded_material/loaded_color entry, which makes this the same equality check it always
+// was; an Auto printer's set is one entry per loaded AMS spool.
 function candidateSql(selectColumns, excludeCount = 0) {
   const excludeClause = excludeCount > 0
     ? `AND parts.id NOT IN (${Array.from({ length: excludeCount }, () => '?').join(',')})`
@@ -40,17 +46,26 @@ ${selectColumns}
           AND (COALESCE(gcodes.allowed_groups, projects.allowed_groups) IS NULL OR EXISTS (
             SELECT 1 FROM json_each(COALESCE(gcodes.allowed_groups, projects.allowed_groups)) WHERE value = ?
           ))
-          AND (COALESCE(gcodes.required_material, projects.required_material) IS NULL OR COALESCE(gcodes.required_material, projects.required_material) = ?)
-          AND (COALESCE(gcodes.required_color, projects.required_color) IS NULL OR COALESCE(gcodes.required_color, projects.required_color) = ?)
+          AND (
+            (COALESCE(gcodes.required_material, projects.required_material) IS NULL
+              AND COALESCE(gcodes.required_color, projects.required_color) IS NULL)
+            OR EXISTS (
+              SELECT 1 FROM json_each(?) AS loaded
+              WHERE (COALESCE(gcodes.required_material, projects.required_material) IS NULL
+                     OR json_extract(loaded.value, '$.material') = COALESCE(gcodes.required_material, projects.required_material))
+                AND (COALESCE(gcodes.required_color, projects.required_color) IS NULL
+                     OR json_extract(loaded.value, '$.color') = COALESCE(gcodes.required_color, projects.required_color))
+            )
+          )
           ${excludeClause}
         ORDER BY projects.priority ASC, projects.created_at ASC, parts.sort_order ASC, parts.created_at ASC
         LIMIT 1
       `;
 }
 
-// Exactly the columns _reserveJob reads. Unchanged from when this query lived inline in
-// scheduler.js: dispatch must not start seeing new columns as a side effect of the
-// schedule needing them.
+// Exactly the columns _reserveJob reads: dispatch must not start seeing new columns as a
+// side effect of the schedule needing them. The effective required material and color
+// were added so an Auto printer can be sent to the AMS slot that matched.
 const SCHEDULER_COLUMNS = `          parts.id          AS part_id,
           parts.target_qty,
           parts.completed_qty,
@@ -59,7 +74,9 @@ const SCHEDULER_COLUMNS = `          parts.id          AS part_id,
           gcodes.filename,
           gcodes.filepath,
           gcodes.parts_per_plate,
-          gcodes.ams_slot`;
+          gcodes.ams_slot,
+          COALESCE(gcodes.required_material, projects.required_material) AS required_material,
+          COALESCE(gcodes.required_color, projects.required_color)       AS required_color`;
 
 // The projection additionally needs the two time estimates (to size a block) and the
 // display names (to label one).

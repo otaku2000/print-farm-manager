@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS gcodes (
   parts_per_plate    INTEGER NOT NULL,
   est_print_secs     INTEGER,            -- nullable; per-plate print time in seconds
   material_grams     REAL,              -- nullable; per-plate filament weight in grams
-  ams_slot           INTEGER,            -- Bambu only: -1=external spool, 0-N=AMS slot, NULL=non-Bambu
+  ams_slot           INTEGER,            -- Bambu only: -2=match from AMS, -1=external spool, 0-N=fixed AMS tray (0-based), NULL=non-Bambu
   allowed_groups     TEXT,               -- nullable JSON array e.g. '["Rack A","Rack B"]'; NULL = no restriction
   required_material  TEXT,               -- nullable; overrides the project default below when set
   required_color     TEXT,               -- nullable; overrides the project default below when set

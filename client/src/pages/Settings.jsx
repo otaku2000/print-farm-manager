@@ -32,6 +32,9 @@ const CONNECTOR_LABEL = {
 // Connector types that do not use an API key
 const NO_API_KEY_TYPES = new Set(['elegoo-centauri', 'klipper']);
 
+// Add Printer Loaded Material value meaning "match against the AMS" (filament_auto = 1).
+const AUTO_FILAMENT = '__auto__';
+
 // Per-brand hints on where to find connection credentials
 const CREDENTIAL_HELP = {
   'prusa':            'API Key: on the printer under Settings → Network → PrusaLink, or in the PrusaLink web UI (open the printer\'s IP in a browser) under Settings → API Key.',
@@ -176,8 +179,12 @@ export default function Settings() {
           model: addForm.model,
           group_name: addForm.group_name.trim() || null,
           type: addForm.type,
-          loaded_material: addForm.loaded_material.trim() || null,
-          loaded_color: addForm.loaded_color.trim() || null,
+          ...(addForm.loaded_material === AUTO_FILAMENT
+            ? { filament_auto: 1 }
+            : {
+                loaded_material: addForm.loaded_material.trim() || null,
+                loaded_color: addForm.loaded_color.trim() || null,
+              }),
         }),
       });
       const data = await res.json();
@@ -842,7 +849,11 @@ export default function Settings() {
                 onChange={e => {
                   const t = e.target.value;
                   const first = allModels.find(m => m.connector === t);
-                  setAddForm(p => ({ ...p, type: t, model: first?.model_id || '', serial_number: '' }));
+                  // Auto (from AMS) only exists for Bambu: drop it when switching brand.
+                  setAddForm(p => ({
+                    ...p, type: t, model: first?.model_id || '', serial_number: '',
+                    ...(t !== 'bambu' && p.loaded_material === AUTO_FILAMENT ? { loaded_material: '', loaded_color: '' } : {}),
+                  }));
                 }}
                 style={inputStyle}
               >
@@ -935,15 +946,16 @@ export default function Settings() {
                 style={inputStyle}
               >
                 <option value="">— none —</option>
+                {addForm.type === 'bambu' && <option value={AUTO_FILAMENT}>Auto (from AMS)</option>}
                 {filamentTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
               </select>
             </div>
             <div>
               <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>Loaded Color</label>
               <select
-                value={addForm.loaded_color}
+                value={addForm.loaded_material === AUTO_FILAMENT ? '' : addForm.loaded_color}
                 onChange={e => setAddForm(p => ({ ...p, loaded_color: e.target.value }))}
-                disabled={!addForm.loaded_material}
+                disabled={!addForm.loaded_material || addForm.loaded_material === AUTO_FILAMENT}
                 style={inputStyle}
               >
                 <option value="">— none —</option>

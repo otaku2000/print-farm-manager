@@ -74,6 +74,38 @@ Returns `[]` if no active Bambu printer of that model is connected or the model 
 
 ---
 
+### `GET /api/printers/loaded-filament`
+
+Returns the live AMS contents of every active Bambu printer, keyed by printer id, read from the driver's cached MQTT report (it never contacts a printer). A printer that has not reported its AMS yet is left out. Used by the Printers page.
+
+No parameters. Always `200`.
+
+**Response** (one printer with one AMS, slot 2 empty, slot 1 feeding):
+```json
+{
+  "5": {
+    "trays": [
+      { "slot": 0, "ams_id": 0, "slot_id": 0, "type": "ABS-GF", "name": "ABS-GF", "color": "000000", "remain": 34 },
+      { "slot": 1, "ams_id": 0, "slot_id": 1, "type": null, "name": null, "color": null, "remain": null },
+      { "slot": 2, "ams_id": 0, "slot_id": 2, "type": "PETG", "name": "PETG HF", "color": "0C3B95", "remain": 100 },
+      { "slot": 3, "ams_id": 0, "slot_id": 3, "type": "PET-CF", "name": "PET-CF", "color": "000000", "remain": null }
+    ],
+    "external": null,
+    "active_slot": 0
+  }
+}
+```
+
+- `trays`: every tray including empty ones. `slot` is `ams_id * 4 + slot_id` (0-based; the printer screen shows it plus 1). `type` is the generic filament type (`tray_type`) and `name` the product (`tray_sub_brands`, such as "PETG HF", falling back to `type`); both are `null` when the tray is empty. `color` is `RRGGBB` or `null`. `remain` is the percent of filament left, or `null` when the printer does not know it: Bambu reports -1 for a spool without a Bambu RFID tag.
+- `external`: `{ "type", "color" }` when a spool is on the external holder, else `null`.
+- `active_slot`: the tray feeding now, `-1` for the external spool, `null` for none.
+
+### `GET /api/printers/:id/loaded-filament`
+
+The same live AMS contents for one printer, as `{ "filament": { ... } }` in the shape above. `filament` is `null` for a non-Bambu or decommissioned printer, or one that has not reported its AMS yet. `404` if the printer does not exist. Used by the Printer Detail view.
+
+---
+
 ### `GET /api/printers/:id`
 
 Returns a single printer by ID. `404` if not found.
@@ -94,7 +126,7 @@ Create a single printer.
 }
 ```
 
-Required: `name`, `ip`, `api_key`, `model`. Optional: `group_name`, `type` (defaults to `"prusa"`).
+Required: `name`, `ip`, `api_key`, `model`. Optional: `group_name`, `type` (defaults to `"prusa"`), `loaded_material`, `loaded_color`, and `filament_auto` (`0`/`1`, Bambu only, defaults to `0`; see `PUT` below). `400` for a bad `filament_auto`, or `1` on a non-Bambu printer, and nothing is created.
 
 `model` must be one of: `mk4`, `mk4s`, `c1`, `c1l`, `xl`.
 
@@ -106,7 +138,9 @@ Partial update — only fields provided are changed (uses `COALESCE`). All field
 
 Changing `ip`, `api_key`, `serial_number`, or `type` drops the driver's cached connection for this printer, so the new settings take effect on the next poll (about 15 seconds) with no server restart.
 
-Changing `loaded_material`, `loaded_color`, `group_name`, or `model` triggers a scheduler sweep of idle printers, so an already-idle printer that now matches a waiting part is dispatched immediately (idle printers otherwise only ask for work when they transition into IDLE). `loaded_material` and `loaded_color` are trimmed; an empty or whitespace-only value clears the field.
+Changing `loaded_material`, `loaded_color`, `filament_auto`, `group_name`, or `model` triggers a scheduler sweep of idle printers, so an already-idle printer that now matches a waiting part is dispatched immediately (idle printers otherwise only ask for work when they transition into IDLE). `loaded_material` and `loaded_color` are trimmed; an empty or whitespace-only value clears the field.
+
+`filament_auto` (`0`/`1`, or `true`/`false`) switches a Bambu printer between manual filament (`loaded_material`/`loaded_color`) and Auto, where it matches parts against the spools its AMS reports (see docs/filaments.md, Auto filament). Turning Auto on leaves the manual values stored but ignored. Omitting the field leaves it unchanged. `400` if it is any other value, or `1` on a printer whose type is not `bambu`. A change is logged as an `info_changed` event ("Filament source: Auto (from AMS)" or "Manual").
 
 Returns `404` if not found, `409` on name conflict.
 
@@ -371,6 +405,7 @@ Data for the Print Queue page (Fleet > Print Queue). Every `open` part of every 
         {
           "id": 3, "name": "MK4S_03", "model": "mk4s", "status": "IDLE", "is_held": 0,
           "group_name": "Rack A", "loaded_material": "PETG", "loaded_color": "Black",
+          "filament_auto": 0, "filament_label": "PETG / Black",
           "state": "ready",
           "next_up": { "part_id": 7, "part_name": "Hinge", "project_name": "Rush order", "is_this_part": true },
           "gcode_id": 12, "filename": "hinge_mk4s.bgcode"
@@ -586,7 +621,7 @@ Upload a G-code file and create a DB record. `Content-Type: multipart/form-data`
 - `printer_model` (required) — must be a registered model ID
 - `est_print_secs` (optional): per-plate print time in seconds; used only as a fallback, see "Estimates read from the file" below
 - `material_grams` (optional): per-plate material weight in grams; same fallback rule
-- `ams_slot` (optional) — Bambu only
+- `ams_slot` (optional, Bambu only): `-2` = match a slot from the AMS at dispatch (the Projects upload form's default), `-1` = external spool, `0` and up = a fixed AMS tray (0-based: `0` is slot 1 on the printer screen). `400` for any other value, and the uploaded file is discarded. See docs/filaments.md (Auto filament) and docs/multi-brand.md (Bambu AMS mapping) for how each is used.
 - `allowed_groups` (optional): JSON array string e.g. `'["Rack A","Rack B"]'`; restricts dispatch to printers in one of these groups. Omitted or empty means unrestricted at the G-code level (falls back to the project's `allowed_groups`, if any; see `PUT /api/projects/:id/groups`)
 - `required_material` / `required_color` (optional): overrides the project's defaults for this G-code specifically
 
@@ -830,6 +865,7 @@ Active printers only, overdue first.
     {
       "printer_id": 4, "name": "MK4S_04", "model": "mk4s", "group_name": null,
       "last_performed_at": null, "since": 1760000000000,
+      "next_due_at": 1767776000000,
       "days_since": 112.3, "print_hours_since": 840.5,
       "interval_days": 90, "interval_hours": 2000,
       "custom_days": null, "custom_hours": null,
@@ -840,6 +876,8 @@ Active printers only, overdue first.
 ```
 
 `overdue_reason` is `"days"`, `"hours"`, `"both"`, or `null`.
+
+`next_due_at` (epoch ms) is when the day interval runs out: `since` (the last service, or the date the printer was added) plus `interval_days`. It is in the past for a printer already overdue on days. The print-hour limit can come due before it.
 
 ### `POST /api/maintenance/:printerId/done`
 

@@ -42,6 +42,20 @@ function cleanFilament(v) {
   return (typeof v === 'string' ? v.trim() : v) || null;
 }
 
+// filament_auto: 1 = match parts against the spools the AMS reports
+// (server/printer-filaments.js). Only Bambu printers report an AMS. Shared by create and
+// update. Returns { present, value } or { error }.
+function parseFilamentAuto(body, printerType) {
+  if (!('filament_auto' in body)) return { present: false, value: 0 };
+  const v = body.filament_auto;
+  if (![0, 1, true, false].includes(v)) return { error: 'filament_auto must be 0 or 1' };
+  const value = v ? 1 : 0;
+  if (value === 1 && printerType !== 'bambu') {
+    return { error: 'Auto filament is only available for Bambu printers' };
+  }
+  return { present: true, value };
+}
+
 // scheduler is optional, only needed at runtime for sweepIdlePrinters after an edit
 // changes what a printer can print. Tests pass null so there is no live scheduler dependency.
 module.exports = (db, scheduler = null) => {
@@ -108,6 +122,31 @@ module.exports = (db, scheduler = null) => {
     res.json({ materials, colors });
   });
 
+  // GET /api/printers/loaded-filament: live AMS contents of every active Bambu printer,
+  // keyed by printer id. A printer that has not reported its AMS yet is left out.
+  // Read from the driver's cached MQTT report, so it never contacts a printer.
+  router.get('/loaded-filament', (req, res) => {
+    const { getLoadedFilament } = require('../drivers/bambu');
+    const printers = db.prepare("SELECT * FROM printers WHERE type = 'bambu' AND is_active = 1").all();
+    const out = {};
+    for (const printer of printers) {
+      const filament = getLoadedFilament(printer);
+      if (filament) out[printer.id] = filament;
+    }
+    res.json(out);
+  });
+
+  // GET /api/printers/:id/loaded-filament: the same live AMS contents for one printer.
+  // filament is null for a non-Bambu printer or one that has not reported its AMS yet.
+  router.get('/:id/loaded-filament', (req, res) => {
+    const printer = db.prepare('SELECT * FROM printers WHERE id = ?').get(req.params.id);
+    if (!printer) return res.status(404).json({ error: 'Printer not found' });
+    const filament = printer.type === 'bambu' && printer.is_active
+      ? require('../drivers/bambu').getLoadedFilament(printer)
+      : null;
+    res.json({ filament });
+  });
+
   // GET /api/printers/decommissioned — list decommissioned printers
   router.get('/decommissioned', (req, res) => {
     const printers = db.prepare('SELECT * FROM printers WHERE is_active = 0 ORDER BY decommissioned_at DESC').all();
@@ -152,12 +191,21 @@ module.exports = (db, scheduler = null) => {
       return res.status(400).json({ error: `Unknown model "${model}". Add it in Settings → Printer Models first.` });
     }
     const { loaded_material, loaded_color } = req.body;
+    const auto = parseFilamentAuto(req.body, printerType);
+    if (auto.error) return res.status(400).json({ error: auto.error });
     try {
-      const result = db.prepare(`
-        INSERT INTO printers (name, ip, api_key, serial_number, group_name, type, model, loaded_material, loaded_color, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(name, ip, api_key || '', serial_number || '', group_name || null, printerType, normalized,
-             cleanFilament(loaded_material), cleanFilament(loaded_color), Date.now());
+      const result = db.transaction(() => {
+        const inserted = db.prepare(`
+          INSERT INTO printers (name, ip, api_key, serial_number, group_name, type, model, loaded_material, loaded_color, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(name, ip, api_key || '', serial_number || '', group_name || null, printerType, normalized,
+               cleanFilament(loaded_material), cleanFilament(loaded_color), Date.now());
+        // Only written when turned on: the column defaults to 0 (manual).
+        if (auto.value === 1) {
+          db.prepare('UPDATE printers SET filament_auto = 1 WHERE id = ?').run(inserted.lastInsertRowid);
+        }
+        return inserted;
+      })();
       // Best-effort convenience: a failure here must never turn an already-
       // committed printer creation into a reported error.
       if (group_name && group_name.trim()) {
@@ -208,7 +256,13 @@ module.exports = (db, scheduler = null) => {
       loaded_material: 'Material', loaded_color: 'Color',
     };
 
+    const auto = parseFilamentAuto(req.body, after.type);
+    if (auto.error) return res.status(400).json({ error: auto.error });
+    const autoInBody = auto.present;
+    const newAuto = autoInBody ? auto.value : (printer.filament_auto ?? 0);
+
     try {
+      db.transaction(() => {
       db.prepare(`
         UPDATE printers
         SET name = COALESCE(?, name),
@@ -225,6 +279,13 @@ module.exports = (db, scheduler = null) => {
         WHERE id = ?
       `).run(name, ip, api_key, serial_number, group_name, type, normalized, is_held, decommission_note ?? null,
              newMaterial, newColor, req.params.id);
+      if (autoInBody) db.prepare('UPDATE printers SET filament_auto = ? WHERE id = ?').run(newAuto, req.params.id);
+      })();
+
+      const autoChanged = autoInBody && newAuto !== (printer.filament_auto ?? 0);
+      if (autoChanged) {
+        events.insert(printer.id, 'info_changed', `Filament source: ${newAuto ? 'Auto (from AMS)' : 'Manual'}`);
+      }
 
       // Best-effort convenience: a failure here must never turn an already-
       // committed printer update into a reported error.
@@ -268,7 +329,8 @@ module.exports = (db, scheduler = null) => {
         after.model           !== printer.model ||
         after.group_name      !== printer.group_name ||
         after.loaded_material !== printer.loaded_material ||
-        after.loaded_color    !== printer.loaded_color;
+        after.loaded_color    !== printer.loaded_color ||
+        autoChanged;
       if (targetingChanged && scheduler) scheduler.sweepIdlePrinters();
 
       res.json(db.prepare('SELECT * FROM printers WHERE id = ?').get(req.params.id));

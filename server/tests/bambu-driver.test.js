@@ -6,7 +6,12 @@
 
 jest.mock('mqtt');
 jest.mock('basic-ftp');
+jest.mock('tls');
+jest.mock('../drivers/bambu-tunnel', () => ({ uploadFile: jest.fn(), STORAGE: 'emmc' }));
 
+const { EventEmitter } = require('events');
+const tls  = require('tls');
+const tunnel = require('../drivers/bambu-tunnel');
 const mqtt = require('mqtt');
 const ftp  = require('basic-ftp');
 const bambu = require('../drivers/bambu');
@@ -222,6 +227,163 @@ describe('getStatus — FAILED: user cancel vs real failure', () => {
   });
 });
 
+// ─── Upload route ─────────────────────────────────────────────────────────────
+
+describe('uploadAndPrint upload route', () => {
+  function ftpError(code) {
+    const err = new Error(`${code} server said no`);
+    err.code = code;
+    return err;
+  }
+
+  async function run(printer) {
+    bambu.getStatus(printer);
+    mockPublish.mockClear();
+    await bambu.uploadAndPrint(printer, '/tmp/1234_part.3mf', 'part.3mf', { amsSlot: 0 });
+  }
+
+  test('a successful FTPS upload does not touch port 6000', async () => {
+    await run(nextPrinter());
+
+    expect(tunnel.uploadFile).not.toHaveBeenCalled();
+    const payload = findPayload('project_file');
+    expect(payload.url).toBe('ftp:///1234_part.3mf');
+    expect(payload.file).toBeUndefined();
+    expect(payload.md5).toBeUndefined();
+  });
+
+  test('FTPS 553 falls back to port 6000 and prints from internal storage', async () => {
+    const printer = nextPrinter();
+    mockFtpClient.uploadFrom.mockRejectedValueOnce(ftpError(553));
+    tunnel.uploadFile.mockResolvedValueOnce(undefined);
+
+    await run(printer);
+
+    expect(tunnel.uploadFile).toHaveBeenCalledWith(printer, '/tmp/1234_part.3mf', '1234_part.3mf');
+    expect(mockFtpClient.close).toHaveBeenCalled();
+    const payload = findPayload('project_file');
+    expect(payload.url).toBe('brtc://emmc/1234_part.3mf');
+    expect(payload.file).toBe('1234_part.3mf');
+    expect(payload.md5).toBe('from_sd_card');
+  });
+
+  test('other FTPS errors fail without trying port 6000', async () => {
+    mockFtpClient.uploadFrom.mockRejectedValueOnce(ftpError(522));
+
+    await expect(run(nextPrinter())).rejects.toThrow('522');
+
+    expect(tunnel.uploadFile).not.toHaveBeenCalled();
+    expect(findPayload('project_file')).toBeNull();
+  });
+
+  test('when both routes fail no print is started and the error names both', async () => {
+    mockFtpClient.uploadFrom.mockRejectedValueOnce(ftpError(553));
+    tunnel.uploadFile.mockRejectedValueOnce(new Error('handshake failure'));
+
+    await expect(run(nextPrinter())).rejects.toThrow(/553.*port 6000.*handshake failure/);
+
+    expect(findPayload('project_file')).toBeNull();
+  });
+});
+
+// ─── FTPS data connection ─────────────────────────────────────────────────────
+
+describe('openDataConnection', () => {
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+
+  function fakeContext(message = '227 Entering Passive Mode (10,0,0,9,195,129).') {
+    return {
+      tlsOptions: { rejectUnauthorized: false },
+      socket:     { remoteAddress: '192.168.1.50', getSession: jest.fn(() => Buffer.from('control-session')) },
+      request:    jest.fn().mockResolvedValue({ code: 227, message }),
+      dataSocket: undefined,
+    };
+  }
+
+  function fakeSocket() {
+    const socket = new EventEmitter();
+    socket.destroy = jest.fn();
+    tls.connect.mockReturnValue(socket);
+    return socket;
+  }
+
+  test('uploadAndPrint installs it before uploading', async () => {
+    const printer = nextPrinter();
+    bambu.getStatus(printer);
+    let installedAtUpload;
+    mockFtpClient.uploadFrom.mockImplementation(async () => { installedAtUpload = mockFtpClient.prepareTransfer; });
+
+    await bambu.uploadAndPrint(printer, '/tmp/1234_part.3mf', 'part.3mf', { amsSlot: 0 });
+
+    expect(installedAtUpload).toBe(bambu.openDataConnection);
+  });
+
+  test('connects with TLS directly and reuses the control session', async () => {
+    const ctx = fakeContext();
+    const socket = fakeSocket();
+
+    const pending = bambu.openDataConnection(ctx);
+    await flush();
+    socket.emit('connect');
+    await pending;
+
+    expect(ctx.request).toHaveBeenCalledWith('PASV');
+    const options = tls.connect.mock.calls[0][0];
+    expect(options.session).toEqual(Buffer.from('control-session'));
+    expect(options.port).toBe(195 * 256 + 129);
+    expect(options.rejectUnauthorized).toBe(false);
+    expect(options.socket).toBeUndefined();
+    expect(ctx.dataSocket).toBe(socket);
+  });
+
+  test('uses the control host, not the host in the PASV reply', async () => {
+    const ctx = fakeContext();
+    const socket = fakeSocket();
+
+    const pending = bambu.openDataConnection(ctx);
+    await flush();
+    socket.emit('connect');
+    await pending;
+
+    expect(tls.connect.mock.calls[0][0].host).toBe('192.168.1.50');
+  });
+
+  test('rejects an unreadable PASV reply without connecting', async () => {
+    await expect(bambu.openDataConnection(fakeContext('500 nope'))).rejects.toThrow("Can't parse PASV");
+    expect(tls.connect).not.toHaveBeenCalled();
+  });
+
+  test('a connection error rejects and leaves no data socket', async () => {
+    const ctx = fakeContext();
+    const socket = fakeSocket();
+
+    const pending = bambu.openDataConnection(ctx);
+    await flush();
+    socket.emit('error', new Error('ECONNREFUSED'));
+
+    await expect(pending).rejects.toThrow('ECONNREFUSED');
+    expect(socket.destroy).toHaveBeenCalled();
+    expect(ctx.dataSocket).toBeUndefined();
+  });
+
+  test('gives up when the connection never opens', async () => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
+    try {
+      const ctx = fakeContext();
+      const socket = fakeSocket();
+
+      const pending = bambu.openDataConnection(ctx);
+      await flush();
+      jest.advanceTimersByTime(60000);
+
+      await expect(pending).rejects.toThrow('timed out');
+      expect(socket.destroy).toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
 // ─── uploadAndPrint — .3mf ────────────────────────────────────────────────────
 
 describe('uploadAndPrint — .3mf (project_file)', () => {
@@ -326,6 +488,136 @@ describe('uploadAndPrint — .3mf (project_file)', () => {
     await expect(
       bambu.uploadAndPrint(printer, '/tmp/1234_part.3mf', 'part.3mf')
     ).rejects.toThrow(/no serial number/);
+  });
+});
+
+// ─── getLoadedFilament ───────────────────────────────────────────────────────
+
+describe('getLoadedFilament', () => {
+  test('returns null before any AMS report, without opening a connection', () => {
+    const printer = nextPrinter();
+    mqtt.connect.mockClear();
+    expect(bambu.getLoadedFilament(printer)).toBeNull();
+    expect(mqtt.connect).not.toHaveBeenCalled();
+  });
+
+  test('lists every tray including empty ones, with 6-digit colors and the active tray', () => {
+    const printer = nextPrinter();
+    // Tray fields as an H2S reports them: a Bambu RFID spool (remain 51, sub-brand), an empty
+    // tray ({id, state} only), and a third-party spool (remain -1, no sub-brand).
+    pushStatus(printer, { ams: { tray_now: '3', ams: [{ id: '0', tray: [
+      { id: '0', tray_type: 'PETG', tray_sub_brands: 'PETG HF', tray_color: '000000FF', remain: 51 },
+      { id: '1', state: 26 },
+      { id: '3', tray_type: 'PET-CF', tray_sub_brands: '', tray_color: '0c3b95ff', remain: -1 },
+    ] }] } });
+
+    expect(bambu.getLoadedFilament(printer)).toEqual({
+      trays: [
+        { slot: 0, ams_id: 0, slot_id: 0, type: 'PETG', name: 'PETG HF', color: '000000', remain: 51 },
+        { slot: 1, ams_id: 0, slot_id: 1, type: null, name: null, color: null, remain: null },
+        { slot: 3, ams_id: 0, slot_id: 3, type: 'PET-CF', name: 'PET-CF', color: '0C3B95', remain: null },
+      ],
+      external: null,
+      active_slot: 3,
+    });
+  });
+
+  test('reports the external spool and maps tray_now 254 to -1, 255 to null', () => {
+    const printer = nextPrinter();
+    pushStatus(printer, { vt_tray: { id: '254', tray_type: 'PLA', tray_color: 'FF6600FF' }, ams: { tray_now: '254', ams: [] } });
+    expect(bambu.getLoadedFilament(printer)).toMatchObject({ external: { type: 'PLA', color: 'FF6600' }, active_slot: -1 });
+
+    messageHandler(null, Buffer.from(JSON.stringify({ print: { ams: { tray_now: '255', ams: [] } } })));
+    expect(bambu.getLoadedFilament(printer).active_slot).toBeNull();
+  });
+});
+
+// ─── uploadAndPrint: AMS mapping from the sliced file ────────────────────────
+// Real-world trigger: BL-H2S-004 paused with "Failed to get AMS mapping table" on a plate
+// that prints with project filament 2 while its configured slot held PET-CF.
+
+describe('uploadAndPrint: AMS mapping from the sliced file', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { buildZip } = require('./helpers/build-zip');
+
+  function servoMount3mf() {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'bambu-')), '1234_servo.gcode.3mf');
+    fs.writeFileSync(file, buildZip({
+      'Metadata/slice_info.config':
+        '<config><plate><metadata key="index" value="1"/>' +
+        '<filament id="2" tray_info_idx="GFG02" type="PETG" color="#CAD1EE" used_g="11.00"/></plate></config>',
+      'Metadata/project_settings.config': JSON.stringify({ filament_type: ['PETG', 'PETG'] }),
+    }));
+    return file;
+  }
+
+  const h2s004Ams = { ams: { ams: [{ id: '0', tray: [
+    { id: '0', tray_type: 'ABS-GF', tray_color: '000000FF' },
+    { id: '1', tray_type: 'PETG', tray_color: '000000FF' },
+    { id: '2', tray_type: 'ABS-GF', tray_color: '0C3B95FF' },
+    { id: '3', tray_type: 'PET-CF', tray_color: '000000FF' },
+  ] }] } };
+
+  test('maps the plate filament by index and moves to the tray holding its type', async () => {
+    const printer = nextPrinter();
+    pushStatus(printer, { gcode_state: 'IDLE', ...h2s004Ams });
+    mockPublish.mockClear();
+
+    await bambu.uploadAndPrint(printer, servoMount3mf(), 'servo.gcode.3mf', { amsSlot: 3 });
+
+    const p = findPayload('project_file');
+    expect(p.use_ams).toBe(true);
+    expect(p.ams_mapping).toEqual([-1, 1]);
+    expect(p.ams_mapping2).toEqual([{ ams_id: 255, slot_id: 255 }, { ams_id: 0, slot_id: 1 }]);
+  });
+
+  test('regression: on a fresh connection, waits for the AMS report before choosing', async () => {
+    const printer = nextPrinter();
+    bambu.getStatus(printer); // connected, but no report has arrived
+    mockPublish.mockClear();
+
+    const pending = bambu.uploadAndPrint(printer, servoMount3mf(), 'servo.gcode.3mf', { amsSlot: 3, amsReportWaitMs: 5000 });
+    setTimeout(() => messageHandler(null, Buffer.from(JSON.stringify({ print: { gcode_state: 'IDLE', ...h2s004Ams } }))), 50);
+    await pending;
+
+    expect(findPayload('project_file').ams_mapping).toEqual([-1, 1]);
+  });
+
+  test('match from AMS (amsSlot -2) picks the PETG tray and sends both mappings', async () => {
+    const printer = nextPrinter();
+    pushStatus(printer, { gcode_state: 'IDLE', ...h2s004Ams });
+    mockPublish.mockClear();
+
+    await bambu.uploadAndPrint(printer, servoMount3mf(), 'servo.gcode.3mf', { amsSlot: -2 });
+
+    const p = findPayload('project_file');
+    expect(p.use_ams).toBe(true);
+    expect(p.ams_mapping).toEqual([-1, 1]);
+    expect(p.ams_mapping2).toEqual([{ ams_id: 255, slot_id: 255 }, { ams_id: 0, slot_id: 1 }]);
+  });
+
+  test('refuses before uploading when no AMS report arrives', async () => {
+    const printer = nextPrinter();
+    bambu.getStatus(printer);
+    mockPublish.mockClear();
+
+    await expect(bambu.uploadAndPrint(printer, servoMount3mf(), 'servo.gcode.3mf', { amsSlot: 3, amsReportWaitMs: 50 }))
+      .rejects.toMatchObject({ code: 'AMS_UNKNOWN' });
+    expect(mockFtpClient.uploadFrom).not.toHaveBeenCalled();
+  });
+
+  test('refuses before uploading when no tray holds the needed type', async () => {
+    const printer = nextPrinter();
+    const noPetg = { ams: { ams: [{ id: '0', tray: [{ id: '0', tray_type: 'PLA' }, { id: '3', tray_type: 'PET-CF' }] }] } };
+    pushStatus(printer, { gcode_state: 'IDLE', ...noPetg });
+    mockPublish.mockClear();
+
+    await expect(bambu.uploadAndPrint(printer, servoMount3mf(), 'servo.gcode.3mf', { amsSlot: 3 }))
+      .rejects.toMatchObject({ code: 'AMS_NO_MATCH' });
+    expect(mockFtpClient.uploadFrom).not.toHaveBeenCalled();
+    expect(findPayload('project_file')).toBeNull();
   });
 });
 

@@ -55,6 +55,9 @@ module.exports = (db) => {
       group_name: printer.group_name,
       last_performed_at: last ? last.performed_at : null,
       since,
+      // When the day interval runs out: the last service (or the date the printer was
+      // added) plus interval_days. The print-hour limit can come due sooner.
+      next_due_at: since + intervalDays * DAY_MS,
       days_since: Math.round(daysSince * 10) / 10,
       print_hours_since: Math.round(hoursUsed * 10) / 10,
       interval_days: intervalDays,

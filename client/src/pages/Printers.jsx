@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { LoadedFilamentChips } from '../components/LoadedFilament';
 
 const STATUS_COLORS = {
   IDLE:     { bg: '#1e3a5f', text: '#93c5fd' },
@@ -19,6 +20,9 @@ const SUMMARY_PILLS = [
   { key: 'PAUSED',   label: 'paused',   bg: '#451a03', text: '#f59e0b' },
   { key: 'OFFLINE',  label: 'offline',  bg: '#0d1117', text: '#475569' },
 ];
+
+// Bulk Material value meaning "match against the AMS" (filament_auto = 1).
+const AUTO_FILAMENT = '__auto__';
 
 const COLLAPSED_KEY = 'printers.collapsedGroups';
 const SHOW_DECOM_KEY = 'printers.showDecommissioned';
@@ -52,6 +56,7 @@ export default function Printers() {
   const [printers, setPrinters]     = useState([]);
   const [models, setModels]         = useState([]);
   const [loading, setLoading]       = useState(true);
+  const [loadedFilament, setLoadedFilament] = useState({});
   const [search, setSearch]         = useState('');
   const [collapsed, setCollapsed]   = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '[]')); }
@@ -84,6 +89,15 @@ export default function Printers() {
       setModels(modelList);
       setLoading(false);
     }).catch(() => setLoading(false));
+  }, []);
+
+  // Live AMS contents change whenever an operator swaps a spool, so poll them like the
+  // other live pages do. Background poll: errors are swallowed.
+  useEffect(() => {
+    const load = () => fetch('/api/printers/loaded-filament').then(r => r.json()).then(setLoadedFilament).catch(() => {});
+    load();
+    const timer = setInterval(load, 15000);
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -153,17 +167,28 @@ export default function Printers() {
     const grp = bulkGroup.trim();
     if (!mat && !col && !grp) return;
     setApplying(true);
-    const body = {};
-    if (mat) body.loaded_material = mat;
-    if (col) body.loaded_color = col;
-    if (grp) body.group_name = grp;
-    await Promise.all([...selectedIds].map(id =>
-      fetch(`/api/printers/${id}`, {
+    const auto = mat === AUTO_FILAMENT;
+    const byId = new Map(printers.map(p => [p.id, p]));
+    await Promise.all([...selectedIds].map(id => {
+      const isBambu = byId.get(id)?.type === 'bambu';
+      const body = {};
+      if (grp) body.group_name = grp;
+      if (auto) {
+        // Auto only exists for Bambu printers; other selected printers keep their material.
+        if (isBambu) body.filament_auto = 1;
+      } else {
+        if (mat) body.loaded_material = mat;
+        if (col) body.loaded_color = col;
+        // Picking a manual material switches a Bambu printer back to manual.
+        if (mat && isBambu) body.filament_auto = 0;
+      }
+      if (Object.keys(body).length === 0) return Promise.resolve();
+      return fetch(`/api/printers/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-      })
-    ));
+      });
+    }));
     await fetchPrinters();
     setApplying(false);
     clearSelection();
@@ -299,12 +324,13 @@ export default function Printers() {
             style={bulkInputSx}
           >
             <option value="">Material…</option>
+            <option value={AUTO_FILAMENT}>Auto (from AMS, Bambu only)</option>
             {filamentTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
           </select>
           <select
             value={bulkColor}
             onChange={e => setBulkColor(e.target.value)}
-            disabled={!bulkMaterial}
+            disabled={!bulkMaterial || bulkMaterial === AUTO_FILAMENT}
             style={bulkInputSx}
           >
             <option value="">Color…</option>
@@ -369,6 +395,7 @@ export default function Printers() {
               selectedIds={selectedIds}
               onTogglePrinter={togglePrinter}
               onSelectGroup={selectGroup}
+              loadedFilament={loadedFilament}
             />
           ))}
 
@@ -405,7 +432,7 @@ const bulkInputSx = {
 };
 
 function GroupSection({ group, open, onToggle, onClickPrinter, dimmed, hideEmpty,
-                        selectedIds, onTogglePrinter, onSelectGroup }) {
+                        selectedIds, onTogglePrinter, onSelectGroup, loadedFilament = {} }) {
   if (hideEmpty && group.matched.length === 0) return null;
 
   const summary = summarize(group.all);
@@ -558,13 +585,20 @@ function GroupSection({ group, open, onToggle, onClickPrinter, dimmed, hideEmpty
               </span>
               <span style={{ fontSize: 13, color: '#64748b' }}>{printer.group_name || '—'}</span>
               <span style={{ fontSize: 12, color: '#7dd3fc' }}>
-                {[printer.loaded_material, printer.loaded_color].filter(Boolean).join(' · ') || '—'}
+                {printer.type === 'bambu' && printer.filament_auto
+                  ? 'Auto (AMS)'
+                  : [printer.loaded_material, printer.loaded_color].filter(Boolean).join(' · ') || '—'}
               </span>
               <span style={{ fontSize: 12, color: '#475569', fontFamily: 'monospace' }}>{printer.ip}</span>
               <span>{dimmed
                 ? <span style={{ fontSize: 11, color: '#475569' }}>offline</span>
                 : statusBadge(printer.status)
               }</span>
+              {printer.type === 'bambu' && !dimmed && (
+                <div style={{ gridColumn: '2 / -1', marginTop: 6 }}>
+                  <LoadedFilamentChips filament={loadedFilament[printer.id]} />
+                </div>
+              )}
             </div>
           ))}
         </div>

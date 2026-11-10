@@ -26,20 +26,20 @@
 // part of the hash, so activating one changes the fingerprint and pulls its parts in.
 
 const crypto = require('crypto');
+const { filamentsParam } = require('./printer-filaments');
 
 // Bumped when the set of hashed inputs changes, so an old client's fingerprint can never
 // accidentally compare equal to a new server's.
-const FINGERPRINT_VERSION = 'v1';
+const FINGERPRINT_VERSION = 'v2';
 
 function fingerprint(db) {
   const h = crypto.createHash('sha1');
   h.update(FINGERPRINT_VERSION);
 
-  for (const p of db.prepare(`
-    SELECT id, status, is_held, model, group_name, loaded_material, loaded_color
-    FROM printers WHERE is_active = 1 ORDER BY id
-  `).all()) {
-    h.update(`P${p.id}|${p.status}|${p.is_held}|${p.model}|${p.group_name || ''}|${p.loaded_material || ''}|${p.loaded_color || ''};`);
+  // The filament set, not just the manual columns: an Auto printer's eligibility changes
+  // when a spool is swapped in its AMS (server/printer-filaments.js).
+  for (const p of db.prepare('SELECT * FROM printers WHERE is_active = 1 ORDER BY id').all()) {
+    h.update(`P${p.id}|${p.status}|${p.is_held}|${p.model}|${p.group_name || ''}|${filamentsParam(db, p)};`);
   }
 
   for (const pr of db.prepare(`

@@ -26,6 +26,18 @@
 const mqtt     = require('mqtt');
 const ftp      = require('basic-ftp');
 const path     = require('path');
+const tls      = require('tls');
+const tunnel   = require('./bambu-tunnel');
+const ams      = require('./bambu-ams');
+
+// FTP reply when the server cannot create the file. An H2-series printer sends it for an
+// upload to its FTP root when no drive is inserted.
+const FTP_CANNOT_CREATE_FILE = 553;
+
+// How long to wait for TCP to connect on the FTPS data port. The printer is on
+// the LAN, so this only has to exceed a slow printer accepting a connection
+// while it is busy; the TLS handshake itself happens later, after STOR.
+const FTPS_DATA_CONNECT_TIMEOUT_MS = 15000;
 
 // Map of printer.id → { client, latestPrint, connected }
 const connections = new Map();
@@ -239,9 +251,62 @@ function getAmsSlots(printer) {
   return slots;
 }
 
+// How long a dispatch waits for a printer's first AMS report. Must exceed an MQTT connect
+// (10 s connectTimeout above) plus the reply to the pushall sent on connect.
+const AMS_REPORT_WAIT_MS = 20000;
+const AMS_REPORT_POLL_MS = 250;
+
+// Resolves once the connection has an AMS report, or after timeoutMs (the caller's mapping
+// step then refuses the dispatch).
+async function waitForAmsReport(conn, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (!Array.isArray(conn.latestPrint?.ams?.ams) && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, AMS_REPORT_POLL_MS));
+  }
+}
+
+// Live loaded filament for display, from the cached MQTT report. Never opens a connection.
+// Returns null until the printer has reported its AMS. Shape:
+//   trays        every AMS tray, empty ones included:
+//                { slot, ams_id, slot_id, type, name, color, remain }
+//                slot is the compound id (ams_id * 4 + slot_id); type is the generic
+//                tray_type ("PETG") and name the product (tray_sub_brands, "PETG HF"),
+//                falling back to type for spools without one; both null when empty;
+//                color is RRGGBB or null; remain is percent left (0 to 100), or null when
+//                the printer does not know. Read from live H2S/H2D reports: remain is
+//                -1 for a spool without a Bambu RFID tag.
+//   external     the external spool { type, color } when one is loaded, else null
+//   active_slot  tray currently feeding (tray_now): a slot, -1 for the external spool,
+//                null when none (OpenBambuAPI: 254 = external, 255 = none)
+function getLoadedFilament(printer) {
+  const conn = connections.get(printer.id);
+  const trays = ams.liveTrays(conn?.latestPrint);
+  if (!trays) return null;
+
+  const report = conn.latestPrint;
+  const vt = report.vt_tray;
+  const trayNow = parseInt(report.ams?.tray_now, 10);
+  let activeSlot = null;
+  if (trayNow === 254) activeSlot = -1;
+  else if (Number.isInteger(trayNow) && trayNow >= 0 && trayNow < 254) activeSlot = trayNow;
+
+  return {
+    trays: trays.map(t => ({
+      slot: t.tray, ams_id: t.amsId, slot_id: t.slotId,
+      type: t.type || null,
+      name: t.type ? (t.subBrand || t.type) : null,
+      color: t.type ? t.color : null,
+      remain: t.type && Number.isInteger(t.remain) && t.remain >= 0 && t.remain <= 100 ? t.remain : null,
+    })),
+    external: vt?.tray_type ? { type: vt.tray_type, color: vt.tray_color ? String(vt.tray_color).slice(0, 6).toUpperCase() : null } : null,
+    active_slot: activeSlot,
+  };
+}
+
 // Uploads the G-code file to the printer via FTPS, then triggers printing via MQTT.
 // gcodeFullPath must be a resolved absolute path that already exists on disk.
-// options.amsSlot: -1 = external spool, 0–N = AMS slot, null = default (external)
+// options.amsSlot: -1 or null = external spool, 0 to N = a fixed AMS tray (checked against
+// the sliced file's filament), -2 = match a tray from the AMS by that filament (bambu-ams.js)
 async function uploadAndPrint(printer, gcodeFullPath, _filename, options = {}) {
   const { amsSlot = null } = options;
   if (!printer.serial_number) {
@@ -262,8 +327,69 @@ async function uploadAndPrint(printer, gcodeFullPath, _filename, options = {}) {
     );
   }
 
-  // ── FTPS upload ──────────────────────────────────────────────────────────
-  // .3mf files go to the SD card root.
+  // Resolve the AMS mapping before uploading, so a printer without the filament the plate
+  // needs is refused without a wasted transfer. Layout and sources: bambu-ams.js.
+  // A dispatch right after recommission arrives on a brand new MQTT connection that has not
+  // received its first report yet, so wait for the AMS contents instead of guessing.
+  const conn = getOrCreateConnection(printer);
+  const plate = ams.readPlateFilaments(gcodeFullPath);
+  if (ams.needsAmsReport(amsSlot, plate)) {
+    await waitForAmsReport(conn, options.amsReportWaitMs ?? AMS_REPORT_WAIT_MS);
+  }
+  const mapping = ams.buildAmsMapping({
+    printerName: printer.name,
+    amsSlot,
+    plate,
+    latestPrint: conn.latestPrint,
+  });
+  if (mapping.note) console.log(`[bambu] ${printer.name}: ${mapping.note}`);
+
+  const usedInternalStorage = await uploadToPrinter(printer, gcodeFullPath, onPrinterFilename);
+
+  // ── MQTT print trigger ───────────────────────────────────────────────────
+  if (!conn.connected) {
+    throw new Error(`Bambu printer ${printer.name} MQTT not connected — cannot trigger print`);
+  }
+
+  const subtaskName = path.basename(onPrinterFilename, '.3mf');
+  const printPayload = {
+    sequence_id:     '0',
+    command:         'project_file',
+    param:           'Metadata/plate_1.gcode',
+    subtask_name:    subtaskName,
+    url:             usedInternalStorage
+      ? `brtc://${tunnel.STORAGE}/${onPrinterFilename}`
+      : `ftp:///${onPrinterFilename}`,
+    ...(usedInternalStorage ? { file: onPrinterFilename, md5: 'from_sd_card' } : {}),
+    bed_type:        'auto',
+    timelapse:       false,
+    bed_leveling:    true,
+    flow_cali:       false,
+    vibration_cali:  true,
+    layer_inspect:   false,
+    use_ams:         mapping.useAms,
+    ams_mapping:     mapping.amsMapping,
+    ...(mapping.amsMapping2 ? { ams_mapping2: mapping.amsMapping2 } : {}),
+    profile_id:      '0',
+    project_id:      '0',
+    subtask_id:      '0',
+    task_id:         '0',
+  };
+
+  const mqttPayload = JSON.stringify({ print: printPayload });
+  console.log(`[bambu] MQTT payload → ${printer.name}: ${mqttPayload}`);
+  conn.client.publish(`device/${printer.serial_number}/request`, mqttPayload, (err) => {
+    if (err) console.error(`[bambu] MQTT publish failed for ${printer.name}:`, err.message);
+    else console.log(`[bambu] MQTT publish confirmed for ${printer.name}`);
+  });
+}
+
+// ─── Upload ───────────────────────────────────────────────────────────────────
+
+// Tries FTPS first, which writes to the SD card or USB drive. An H2-series printer with no
+// drive refuses that with 553, and then the file goes to internal storage over port 6000.
+// Bambu Studio falls back in the same order. Returns true when internal storage was used.
+async function uploadToPrinter(printer, gcodeFullPath, onPrinterFilename) {
   console.log(`[bambu] Uploading ${onPrinterFilename} to ${printer.name} via FTPS…`);
 
   const ftpClient = new ftp.Client();
@@ -279,52 +405,72 @@ async function uploadAndPrint(printer, gcodeFullPath, _filename, options = {}) {
       secureOptions: { rejectUnauthorized: false },
     });
 
+    ftpClient.prepareTransfer = openDataConnection;
     await ftpClient.uploadFrom(gcodeFullPath, onPrinterFilename);
     console.log(`[bambu] Upload complete on ${printer.name}`);
+    return false;
+  } catch (err) {
+    if (err.code !== FTP_CANNOT_CREATE_FILE) throw err;
   } finally {
     ftpClient.close();
   }
 
-  // ── MQTT print trigger ───────────────────────────────────────────────────
-  const conn = getOrCreateConnection(printer);
-
-  if (!conn.connected) {
-    throw new Error(`Bambu printer ${printer.name} MQTT not connected — cannot trigger print`);
+  console.log(`[bambu] ${printer.name} has no writable FTPS storage, uploading to internal storage on port 6000…`);
+  try {
+    await tunnel.uploadFile(printer, gcodeFullPath, onPrinterFilename);
+  } catch (err) {
+    throw new Error(
+      `Bambu printer ${printer.name} refused the FTPS upload (553, no drive?) and the port 6000 upload failed: ${err.message}`
+    );
   }
+  console.log(`[bambu] Upload complete on ${printer.name} (internal storage)`);
+  return true;
+}
 
-  // ams_mapping format for LAN printing: a flat array where index = filament slot
-  // in the .3mf (0-based) and value = physical AMS tray ID (0-15).
-  // For single-color prints: [amsSlot] (one element).
-  // For external spool or no AMS: [] (empty).
-  // Ref: https://github.com/Doridian/OpenBambuAPI (issue #38 + mqtt.md)
-  const subtaskName = path.basename(onPrinterFilename, '.3mf');
-  const useAms      = amsSlot != null && amsSlot >= 0;
-  const printPayload = {
-    sequence_id:     '0',
-    command:         'project_file',
-    param:           'Metadata/plate_1.gcode',
-    subtask_name:    subtaskName,
-    url:             `ftp:///${onPrinterFilename}`,
-    bed_type:        'auto',
-    timelapse:       false,
-    bed_leveling:    true,
-    flow_cali:       false,
-    vibration_cali:  true,
-    layer_inspect:   false,
-    use_ams:         useAms,
-    ams_mapping:     useAms ? [amsSlot] : [],
-    profile_id:      '0',
-    project_id:      '0',
-    subtask_id:      '0',
-    task_id:         '0',
-  };
+// ─── FTPS data connection ─────────────────────────────────────────────────────
 
-  const mqttPayload = JSON.stringify({ print: printPayload });
-  console.log(`[bambu] MQTT payload → ${printer.name}: ${mqttPayload}`);
-  conn.client.publish(`device/${printer.serial_number}/request`, mqttPayload, (err) => {
-    if (err) console.error(`[bambu] MQTT publish failed for ${printer.name}:`, err.message);
-    else console.log(`[bambu] MQTT publish confirmed for ${printer.name}`);
+// Replaces basic-ftp's passive-mode setup for uploads.
+//
+// The printer's FTP server (vsftpd) rejects a data connection that does not
+// resume the control connection's TLS session: "522 SSL connection failed:
+// session reuse required". basic-ftp opens a plain socket and wraps it in TLS,
+// and on Node 22 that wrapped socket does not offer the session, so the upload
+// fails after the server has already created an empty file. Opening the data
+// connection with tls.connect directly does offer it. Observed on an H2D with
+// a packet capture and a side-by-side test of both methods.
+//
+// The handshake is not awaited here: the server only starts TLS on this socket
+// after it receives STOR, and basic-ftp waits for secureConnect before sending
+// file data.
+async function openDataConnection(ftpContext) {
+  const res = await ftpContext.request('PASV');
+  const fields = res.message.match(/(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)/);
+  if (!fields) throw new Error(`Can't parse PASV response: ${res.message}`);
+  const port = parseInt(fields[5], 10) * 256 + parseInt(fields[6], 10);
+
+  await new Promise((resolve, reject) => {
+    const socket = tls.connect({
+      ...ftpContext.tlsOptions,
+      host:    ftpContext.socket.remoteAddress, // same host as the control connection
+      port,
+      session: ftpContext.socket.getSession(),
+    });
+    const fail = (err) => {
+      clearTimeout(timer);
+      socket.destroy();
+      reject(new Error(`Can't open FTPS data connection: ${err.message}`));
+    };
+    const timer = setTimeout(() => fail(new Error('connect timed out')), FTPS_DATA_CONNECT_TIMEOUT_MS);
+    socket.once('error', fail);
+    socket.once('connect', () => {
+      clearTimeout(timer);
+      socket.removeListener('error', fail);
+      ftpContext.dataSocket = socket; // basic-ftp attaches its own error handlers here
+      resolve();
+    });
   });
+
+  return res;
 }
 
 // ─── File cleanup ─────────────────────────────────────────────────────────────
@@ -386,4 +532,4 @@ async function checkIfPrinting(printer) {
   return status === 'PRINTING' || status === 'PAUSED';
 }
 
-module.exports = { getStatus, uploadAndPrint, cancelJob, checkIfPrinting, getAmsSlots, deleteFile, dropConnection };
+module.exports = { getStatus, uploadAndPrint, cancelJob, checkIfPrinting, getAmsSlots, getLoadedFilament, deleteFile, dropConnection, openDataConnection };

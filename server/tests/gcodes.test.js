@@ -81,6 +81,8 @@ beforeAll(() => {
   db.exec(`INSERT INTO printer_models VALUES ('x1c',  'X1 Carbon',  'bambu')`);
   db.exec(`INSERT INTO printer_models VALUES ('a1',   'A1',         'bambu')`);
   db.exec(`INSERT INTO printer_models VALUES ('p1s',  'P1S',        'bambu')`);
+  db.exec(`INSERT INTO printer_models VALUES ('h2s',  'H2S',        'bambu')`);
+  db.exec(`INSERT INTO printer_models VALUES ('h2d',  'H2D',        'bambu')`);
 
   if (!fs.existsSync(GCODE_DIR)) fs.mkdirSync(GCODE_DIR, { recursive: true });
 
@@ -254,6 +256,43 @@ describe('POST /api/gcodes/upload', () => {
     expect(res.status).toBe(201);
     expect(res.body.ams_slot).toBe(-1);
     uploadedPath = res.body.filepath;
+  });
+
+  test('stores ams_slot -2 for match from AMS', async () => {
+    const tmpFile = makeTempGcode('bambu_match.3mf');
+
+    const res = await request(app)
+      .post('/api/gcodes/upload')
+      .attach('file', tmpFile)
+      .field('part_id', '1')
+      .field('parts_per_plate', '1')
+      .field('printer_model', 'h2s')       // distinct model to avoid 409
+      .field('ams_slot', '-2');
+
+    fs.unlinkSync(tmpFile);
+
+    expect(res.status).toBe(201);
+    expect(res.body.ams_slot).toBe(-2);
+    uploadedPath = res.body.filepath;
+  });
+
+  test.each(['-3', '1.5', 'auto'])('rejects ams_slot %s with 400 and keeps no file', async (value) => {
+    const tmpFile = makeTempGcode('bambu_bad_slot.3mf');
+    const before = fs.readdirSync(GCODE_DIR).length;
+
+    const res = await request(app)
+      .post('/api/gcodes/upload')
+      .attach('file', tmpFile)
+      .field('part_id', '1')
+      .field('parts_per_plate', '1')
+      .field('printer_model', 'h2d')
+      .field('ams_slot', value);
+
+    fs.unlinkSync(tmpFile);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/ams_slot must be/);
+    expect(fs.readdirSync(GCODE_DIR).length).toBe(before);
   });
 
   test('ams_slot is null when not provided (non-Bambu upload)', async () => {
