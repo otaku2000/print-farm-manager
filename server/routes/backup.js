@@ -3,6 +3,7 @@ const multer  = require('multer');
 const path    = require('path');
 const fs      = require('fs');
 const partLedger = require('../partLedger');
+const maintenanceTasks = require('../maintenance-tasks');
 
 const router   = express.Router();
 const GCODE_DIR = path.join(__dirname, '..', 'gcode');
@@ -76,6 +77,8 @@ module.exports = (db) => {
     const filament_colors = db.prepare('SELECT * FROM filament_colors').all();
     const settings        = db.prepare('SELECT * FROM settings').all();
     const printer_maintenance = db.prepare('SELECT * FROM printer_maintenance').all();
+    maintenanceTasks.ensureSchema(db);
+    const maintenance_tasks = db.prepare('SELECT * FROM maintenance_tasks').all();
     partLedger.ensureSchema(db);
     const part_qty_ledger = db.prepare('SELECT * FROM part_qty_ledger').all();
 
@@ -103,6 +106,7 @@ module.exports = (db) => {
       filament_colors,
       settings,
       printer_maintenance,
+      maintenance_tasks,
       part_qty_ledger,
       gcode_files: gcodeFiles,
     };
@@ -155,6 +159,10 @@ module.exports = (db) => {
       const hasSettings       = Array.isArray(backup.settings);
 
       partLedger.ensureSchema(db);
+      maintenanceTasks.ensureSchema(db);
+      // Backups from before maintenance tasks have no maintenance_tasks key: keep the
+      // current task list rather than wiping it with nothing to restore from.
+      const hasMaintenanceTasks = Array.isArray(backup.maintenance_tasks);
 
       const restore = db.transaction(() => {
         // Delete in FK dependency order. The part ledger is always cleared: its rows
@@ -163,6 +171,7 @@ module.exports = (db) => {
         db.prepare('DELETE FROM part_qty_ledger').run();
         db.prepare('DELETE FROM printer_events').run();
         db.prepare('DELETE FROM printer_maintenance').run();
+        if (hasMaintenanceTasks) db.prepare('DELETE FROM maintenance_tasks').run();
         db.prepare('DELETE FROM jobs').run();
         db.prepare('DELETE FROM gcodes').run();
         db.prepare('DELETE FROM parts').run();
@@ -190,6 +199,7 @@ module.exports = (db) => {
           filament_color: makeInserter(db, 'filament_colors', backup.filament_colors || []),
           setting:        makeInserter(db, 'settings', backup.settings || []),
           maintenance:    makeInserter(db, 'printer_maintenance', backup.printer_maintenance || []),
+          maintenance_task: makeInserter(db, 'maintenance_tasks', backup.maintenance_tasks || []),
           ledger:        makeInserter(db, 'part_qty_ledger', backup.part_qty_ledger || []),
         };
 
@@ -209,6 +219,8 @@ module.exports = (db) => {
         for (const t of (backup.filament_types  || [])) stmts.filament_type.run(t);
         for (const c of (backup.filament_colors || [])) stmts.filament_color.run(c);
         for (const s of (backup.settings || [])) stmts.setting.run(s);
+        // Tasks before the log entries that name them (printer_maintenance.task_id).
+        for (const t of (backup.maintenance_tasks || [])) stmts.maintenance_task.run(t);
         for (const m of (backup.printer_maintenance || [])) stmts.maintenance.run(m);
         for (const l of (backup.part_qty_ledger || [])) stmts.ledger.run(l);
 
@@ -221,6 +233,7 @@ module.exports = (db) => {
           ['printers', 'printers'], ['projects', 'projects'],
           ['parts', 'parts'], ['gcodes', 'gcodes'], ['jobs', 'jobs'],
           ['printer_events', 'printer_events'], ['printer_maintenance', 'printer_maintenance'], ['part_qty_ledger', 'part_qty_ledger'],
+          ['maintenance_tasks', 'maintenance_tasks'],
           ['filament_types', 'filament_types'], ['filament_colors', 'filament_colors'],
         ]) {
           db.prepare(`

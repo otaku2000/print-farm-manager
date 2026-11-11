@@ -5,6 +5,7 @@ import Fleet from './pages/Fleet';
 import Printers from './pages/Printers';
 import PrinterDetail from './pages/PrinterDetail';
 import Projects from './pages/Projects';
+import QuickPrint from './pages/QuickPrint';
 import PartAudit from './pages/PartAudit';
 import Jobs from './pages/Jobs';
 import Schedule from './pages/Schedule';
@@ -20,6 +21,7 @@ const NAV_ITEMS = [
   { to: '/fleet/queue',    label: 'Print Queue',   child: true },
   { to: '/printers',       label: 'Printers',      end: true },
   { to: '/projects',       label: 'Projects' },
+  { to: '/quick-print',    label: 'Quick Print',   child: true },
   { to: '/jobs',           label: 'Jobs' },
   { to: '/schedule',       label: 'Schedule' },
   { to: '/maintenance',    label: 'Maintenance' },
@@ -126,6 +128,7 @@ export default function App() {
             <Route path="/printers"        element={<Printers />} />
             <Route path="/printers/:id"    element={<PrinterDetail />} />
             <Route path="/projects"        element={<Projects />} />
+            <Route path="/quick-print"     element={<QuickPrint />} />
             <Route path="/parts/:id/audit" element={<PartAudit />} />
             <Route path="/jobs"            element={<Jobs />} />
             <Route path="/schedule"        element={<Schedule />} />

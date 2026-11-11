@@ -591,4 +591,42 @@ describe('Backup export/restore: maintenance log', () => {
       fs.unlinkSync(backupFile);
     }
   });
+
+  test('maintenance tasks and which task each entry was for survive a restore', async () => {
+    // The export creates the task list (server/maintenance-tasks.js) on this test schema.
+    await request(app).get('/api/backup');
+    const task = db.prepare('SELECT * FROM maintenance_tasks ORDER BY id LIMIT 1').get();
+    db.prepare('UPDATE maintenance_tasks SET interval_days = 21 WHERE id = ?').run(task.id);
+    db.prepare('UPDATE printer_maintenance SET task_id = ?').run(task.id);
+
+    const exportRes = await request(app).get('/api/backup');
+    expect(exportRes.body.maintenance_tasks.length).toBeGreaterThan(0);
+    const backupFile = writeTempBackupFile(exportRes.body);
+    try {
+      db.prepare("UPDATE maintenance_tasks SET name = 'wiped', interval_days = 1").run();
+      db.prepare('UPDATE printer_maintenance SET task_id = NULL').run();
+      const restoreRes = await request(app).post('/api/backup/restore').attach('file', backupFile);
+      expect(restoreRes.status).toBe(200);
+      expect(db.prepare('SELECT * FROM maintenance_tasks WHERE id = ?').get(task.id))
+        .toMatchObject({ name: task.name, interval_days: 21 });
+      expect(db.prepare('SELECT task_id FROM printer_maintenance').get().task_id).toBe(task.id);
+    } finally {
+      fs.unlinkSync(backupFile);
+    }
+  });
+
+  test('restoring an older backup without maintenance_tasks keeps the current task list', async () => {
+    await request(app).get('/api/backup');
+    db.prepare("UPDATE maintenance_tasks SET name = 'Kept' WHERE id = 1").run();
+    const exportRes = await request(app).get('/api/backup');
+    delete exportRes.body.maintenance_tasks;
+    const backupFile = writeTempBackupFile(exportRes.body);
+    try {
+      const restoreRes = await request(app).post('/api/backup/restore').attach('file', backupFile);
+      expect(restoreRes.status).toBe(200);
+      expect(db.prepare('SELECT name FROM maintenance_tasks WHERE id = 1').get().name).toBe('Kept');
+    } finally {
+      fs.unlinkSync(backupFile);
+    }
+  });
 });

@@ -850,51 +850,99 @@ Returns `400` for unknown keys or failed validation.
 
 ---
 
-## Maintenance
+## Quick prints
 
-Preventive maintenance warnings. A printer is overdue when it reaches either limit (days or print hours) since its latest logged service, or since it was added if none is logged. Print hours are the summed `started_at` to `finished_at` time of jobs that ran on the printer. Warnings only: nothing here affects dispatch. Farm-wide defaults are the `maintenance_interval_days` and `maintenance_interval_hours` settings; a printer can override either.
+One-off prints without setting up a project (`server/quick-prints.js`). Each is an ordinary part in a built-in project named "Quick prints", created on first use at priority `-1` and recorded in the `quick_print_project_id` setting. Projects dispatch lowest priority number first and reordering numbers them from `0`, so quick prints go ahead of all project work, in the order they were added. `PUT /api/projects/reorder` leaves that project at `-1` wherever it appears in `ids`. Everything else is the normal pipeline: filament and nozzle checks, AMS slot choice, holds and Set Ready, part counts, and the schedule.
 
-### `GET /api/maintenance`
+The Quick Print page adds one with two calls: `POST /api/quick-prints/parts`, then the file through `POST /api/gcodes/upload` with the returned part id (which also triggers the dispatch sweep). If the upload fails it deletes the part with `DELETE /api/parts/:id`.
 
-Active printers only, overdue first.
+### `GET /api/quick-prints`
+
+The project and its 100 most recent parts, newest first, each with its first G-code and any job currently uploading or printing. Always `200`; `{ "project": null, "parts": [] }` before the first quick print (nothing is created).
 
 ```json
 {
-  "defaults": { "interval_days": 90, "interval_hours": 2000 },
-  "overdue_count": 1,
-  "printers": [
+  "project": { "id": 9, "name": "Quick prints", "status": "active" },
+  "parts": [
     {
-      "printer_id": 4, "name": "MK4S_04", "model": "mk4s", "group_name": null,
-      "last_performed_at": null, "since": 1760000000000,
-      "next_due_at": 1767776000000,
-      "days_since": 112.3, "print_hours_since": 840.5,
-      "interval_days": 90, "interval_hours": 2000,
-      "custom_days": null, "custom_hours": null,
-      "overdue": true, "overdue_reason": "days"
+      "id": 41, "name": "Replacement bracket", "target_qty": 2, "completed_qty": 0, "status": "open", "created_at": 1794400000000,
+      "gcode": { "id": 77, "filename": "bracket.gcode.3mf", "printer_model": "h2s", "parts_per_plate": 1, "est_print_secs": 2958 },
+      "active_jobs": [{ "id": 220, "status": "printing", "parts_per_plate": 1, "started_at": 1794400100000, "printer_id": 5, "printer_name": "BL-H2S-004" }]
     }
   ]
 }
 ```
 
-`overdue_reason` is `"days"`, `"hours"`, `"both"`, or `null`.
+### `POST /api/quick-prints/parts`
 
-`next_due_at` (epoch ms) is when the day interval runs out: `since` (the last service, or the date the printer was added) plus `interval_days`. It is in the past for a printer already overdue on days. The print-hour limit can come due before it.
+Creates a quick print's part, creating the project first if needed and reopening it if it had completed (a paused or draft project stays as it is).
+
+Body: `{ "name": "Replacement bracket", "copies": 2, "parts_per_plate": 1 }`. Required: `name` (trimmed, up to 200 characters) and `copies` (plates, whole number 1 to 1000). Optional: `parts_per_plate` (whole number 1 to 1000, default 1). The part's `target_qty` is `copies * parts_per_plate`.
+
+Returns `201` with `{ "project_id": 9, "part": { ... } }`. `400` naming every invalid field, with nothing created.
+
+---
+
+## Maintenance
+
+Preventive maintenance as separate jobs (`server/maintenance-tasks.js`): clean the build plate, clean the nozzle, lube the rods, grease the lead screws, replace filters, and so on. Each task in `maintenance_tasks` has its own interval in days and/or print hours (either may be null, not both) and applies to every active printer. A task's clock restarts at its latest log entry on that printer, or the latest full service (a log entry with `task_id` null), or else when the printer was added; every entry logged before tasks existed is a full service. Print hours are the summed `started_at` to `finished_at` time of jobs that ran on the printer. Warnings only: nothing here affects dispatch. The task list is seeded once with general FDM defaults; a deleted default does not come back. The old single interval (`maintenance_interval_days` / `maintenance_interval_hours` settings and the per-printer override columns) is no longer read.
+
+### `GET /api/maintenance`
+
+Active tasks, and every active printer's status per active task. Printers with any overdue task come first. `overdue_count` counts printers; the Fleet page's "Service due" tag uses `printers[].overdue`.
+
+```json
+{
+  "tasks": [{ "id": 1, "name": "Clean the build plate", "description": "...", "interval_days": 7, "interval_hours": 100, "sort_order": 0, "is_active": 1, "created_at": 1794400000000 }],
+  "overdue_count": 1,
+  "printers": [
+    {
+      "printer_id": 4, "name": "BL-H2S-004", "model": "h2s", "group_name": "Rack A",
+      "overdue": true, "overdue_count": 1, "due_soon_count": 2,
+      "next_due_at": 1794700000000, "last_performed_at": 1794000000000,
+      "tasks": [
+        {
+          "task_id": 1, "last_performed_at": 1794000000000, "since": 1794000000000,
+          "days_since": 9.1, "print_hours_since": 104.2,
+          "interval_days": 7, "interval_hours": 100,
+          "next_due_at": 1794604800000,
+          "overdue": true, "overdue_reason": "both", "due_soon": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+Per task: `overdue_reason` is `"days"`, `"hours"`, `"both"`, or `null`. `due_soon` is true within 14 days of the day limit or at 90% of the hour limit. `next_due_at` is `since` plus `interval_days` (null for an hours-only task); the hour limit can come due first. Per printer, `next_due_at` is the soonest of its tasks.
+
+### `GET /api/maintenance/tasks`
+
+Every task including disabled ones, in list order.
+
+### `POST /api/maintenance/tasks`
+
+Body: `{ "name": "Lubricate the Z rails", "interval_days": null, "interval_hours": 300, "description": "optional" }`. Intervals are whole numbers 1 to 100000 or null/empty; at least one is required. Added at the end of the list, active. `201` with the task; `400` naming each invalid field.
+
+### `PUT /api/maintenance/tasks/:id`
+
+Partial update of `name`, `description`, `interval_days`, `interval_hours` (empty clears one, but not both), and `is_active` (`0`/`1`; a disabled task keeps its history and stops being tracked). Returns the task. `400`, `404`.
+
+### `DELETE /api/maintenance/tasks/:id`
+
+Deletes a task that has never been logged. `409` when it has log entries (disable it instead, so the history keeps its name). `404`.
 
 ### `POST /api/maintenance/:printerId/done`
 
-Logs a service and restarts both counters. Body (all optional): `{ "note": "cleaned rods", "performed_at": 1760000000000 }`. `performed_at` is epoch ms and must not be in the future (default now). Returns `201` with the log row, `400` for a bad `performed_at`, `404` for an unknown printer.
+Logs maintenance. Body (all optional): `{ "task_ids": [1, 4], "note": "washed plate", "performed_at": 1794000000000 }`. With `task_ids`, one entry per task restarts those tasks. Without it, or empty, one full-service entry (`task_id` null) restarts every task. `performed_at` is epoch ms, not in the future, default now. Returns `201` with the new entries (each with `task_name`, null for full service). `400` for a bad date, unknown task ids, or a `task_ids` that is not an array; `404` for an unknown printer.
 
 ### `GET /api/maintenance/:printerId/history`
 
-Log entries for a printer, newest first. `404` for an unknown printer.
-
-### `PUT /api/maintenance/:printerId/intervals`
-
-Per-printer override. Body: `{ "interval_days": 30, "interval_hours": null }`. `null` or an omitted key falls back to the farm default. Returns the printer's status object. `400` for non-integers or values outside 1-100000, `404` for an unknown printer.
+Log entries for a printer, newest first, each with `task_id` and `task_name` (both null for a full service). `404` for an unknown printer.
 
 ### `DELETE /api/maintenance/entry/:entryId`
 
-Removes a mistaken log entry. `404` if not found.
+Removes a mistaken log entry; the task's clock goes back to its previous entry. `404` if not found.
 
 ---
 
