@@ -163,7 +163,7 @@ function PrinterCard({ printer, selected, onToggleSelect, onSetReady, onBadPrint
           </span>
         )}
         {(printer.maintenanceDue || printer.emptySlots?.length > 0) && (
-          <span style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+          <span style={{ display: 'flex', gap: 6, flexBasis: '100%' }}>
             {printer.emptySlots?.length > 0 && (
               <span
                 title={printer.emptySlots.map(e => `AMS slot ${e.slot + 1} ran out of ${e.was}`).join('\n')}
