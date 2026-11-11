@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useModelLabel } from '../useModelLabel';
 import { useSearchParams } from 'react-router-dom';
 import { useConfirm } from '../useConfirm';
 import { useToast } from '../useToast';
@@ -56,6 +57,7 @@ const selectSx = {
 };
 
 export default function Jobs() {
+  const modelLabel = useModelLabel();
   const [confirm, confirmModal]   = useConfirm();
   const [showToast, toastEl]      = useToast();
   const [jobs, setJobs]           = useState([]);
@@ -148,17 +150,17 @@ export default function Jobs() {
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16, alignItems: 'center' }}>
         <select value={statusFilter} onChange={(e) => setStatus(e.target.value)} style={selectSx}>
           {STATUS_OPTIONS.map(s => (
-            <option key={s} value={s}>{s === 'all' ? 'All statuses' : s.charAt(0).toUpperCase() + s.slice(1)}</option>
+            <option key={s} value={s}>{s === 'all' ? 'All Statuses' : s.charAt(0).toUpperCase() + s.slice(1)}</option>
           ))}
         </select>
 
         <select value={projectFilter} onChange={(e) => setProject(e.target.value)} style={selectSx}>
-          <option value="">All projects</option>
+          <option value="">All Projects</option>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
 
         <select value={printerFilter} onChange={(e) => setPrinter(e.target.value)} style={selectSx}>
-          <option value="">All printers</option>
+          <option value="">All Printers</option>
           {printers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
 
@@ -203,7 +205,7 @@ export default function Jobs() {
                   </span>
                 </div>
                 <div style={{ color: '#94a3b8', fontSize: 12, marginBottom: 2 }}>
-                  {job.project_name} · {job.printer_name} <span style={{ color: '#64748b', fontFamily: 'monospace', fontSize: 11 }}>({job.printer_model})</span>
+                  {job.project_name} · {job.printer_name} <span style={{ color: '#64748b', fontFamily: 'monospace', fontSize: 11 }}>({modelLabel(job.printer_model)})</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#64748b', fontSize: 12 }}>
                   <span>
@@ -260,7 +262,7 @@ export default function Jobs() {
                         background: '#0f172a', border: '1px solid #2d3748', borderRadius: 3,
                         padding: '1px 6px', fontSize: 11, fontFamily: 'monospace', color: '#64748b',
                       }}>
-                        {job.printer_model}
+                        {modelLabel(job.printer_model)}
                       </span>
                     </td>
                     <td style={{ padding: '8px 10px' }}>

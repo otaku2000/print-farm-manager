@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useModelLabel } from '../useModelLabel';
 import { useParams, useNavigate } from 'react-router-dom';
 import { LoadedFilamentPanel } from '../components/LoadedFilament';
 
@@ -76,6 +77,7 @@ const detailInputStyle = {
 };
 
 export default function PrinterDetail() {
+  const modelLabel = useModelLabel();
   const { id } = useParams();
   const navigate = useNavigate();
 
@@ -472,7 +474,7 @@ export default function PrinterDetail() {
           </form>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap', fontSize: 13, color: '#64748b' }}>
-            <span>Model: <span style={{ color: '#94a3b8', fontFamily: 'monospace' }}>{printer.model}</span></span>
+            <span>Model: <span style={{ color: '#94a3b8', fontFamily: 'monospace' }}>{modelLabel(printer.model)}</span></span>
             <span>IP: <span style={{ color: '#94a3b8', fontFamily: 'monospace' }}>{printer.ip}</span></span>
             {printer.group_name && (
               <span>Group: <span style={{ color: '#94a3b8' }}>{printer.group_name}</span></span>
@@ -544,7 +546,7 @@ export default function PrinterDetail() {
         background: '#131720', border: '1px solid #1e2433',
         borderRadius: 8, padding: '14px 18px', marginBottom: 24,
       }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 8 }}>Add operator note</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 8 }}>Add Operator Note</div>
         <form onSubmit={submitNote} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
           <textarea
             value={note}

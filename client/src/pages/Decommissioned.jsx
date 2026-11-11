@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useModelLabel } from '../useModelLabel';
 import { useNavigate } from 'react-router-dom';
 import { useConfirm } from '../useConfirm';
 import { useToast } from '../useToast';
@@ -143,6 +144,7 @@ function DecomCard({
   onBeginEdit, onCancelEdit, onChangeDraft, onSave,
   onRecommission, onViewHistory,
 }) {
+  const modelLabel = useModelLabel();
   const note = printer.decommission_note || '';
   const textareaRef = useRef(null);
 
@@ -194,7 +196,7 @@ function DecomCard({
               background: '#0f172a', borderRadius: 3, padding: '1px 6px',
               fontFamily: 'monospace', fontSize: 11, color: '#64748b',
             }}>
-              {printer.model}
+              {modelLabel(printer.model)}
             </span>
             <span style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{printer.ip}</span>
             {printer.group_name && (

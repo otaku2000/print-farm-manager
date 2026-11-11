@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useModelLabel } from '../useModelLabel';
 import { useToast } from '../useToast';
 import EmptyState from '../components/EmptyState';
 import { SCHEDULE_DIRTY_EVENT } from '../scheduleDirty';
@@ -95,6 +96,7 @@ function closedBands(viewStart, viewEnd, startHour, endHour) {
 }
 
 export default function Schedule() {
+  const modelLabel = useModelLabel();
   const [showToast, toastEl] = useToast();
 
   const [data, setData]           = useState(null);
@@ -335,7 +337,7 @@ export default function Schedule() {
         <div className="sched-legend" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginLeft: 'auto', fontSize: 11.5, color: '#64748b' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <span style={{ width: 12, height: 12, borderRadius: 3, background: '#2563eb', border: '1px solid #60a5fa' }} />
-            In progress
+            In Progress
           </span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <span style={{ width: 12, height: 12, borderRadius: 3, background: 'rgba(37,99,235,0.22)', border: '1px dashed #2563eb' }} />
@@ -343,7 +345,7 @@ export default function Schedule() {
           </span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <span style={{ width: 12, height: 12, borderRadius: 3, background: '#1f2937', border: '1px solid #2d3748' }} />
-            Off hours
+            Off Hours
           </span>
           <span title="No print time is known for this plate, so it is drawn at the two-hour default">
             <span style={{ color: '#fbbf24', fontWeight: 700 }}>?</span> time unknown
@@ -382,7 +384,7 @@ export default function Schedule() {
                     <span style={{
                       fontFamily: 'monospace', fontSize: 10, color: '#64748b',
                       background: '#0f172a', border: '1px solid #2d3748', borderRadius: 3, padding: '0 4px',
-                    }}>{p.model}</span>
+                    }}>{modelLabel(p.model)}</span>
                     {p.blocked_reason && (
                       <span
                         title={p.blocked_reason}

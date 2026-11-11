@@ -226,7 +226,7 @@ export default function QuickPrint() {
         `}</style>
         <div className="qp-grid">
           <div className="qp-full">
-            <label style={labelStyle}>Sliced file *</label>
+            <label style={labelStyle}>Sliced File *</label>
             <input ref={fileInputRef} type="file" accept=".3mf,.bgcode,.gcode" onChange={onFile}
               style={{ ...inputStyle, width: '100%' }} />
             {bambuNeeds3mf && <div style={{ color: '#fca5a5', fontSize: 12, marginTop: 4 }}>Bambu printers need a sliced .3mf file.</div>}
@@ -236,7 +236,7 @@ export default function QuickPrint() {
             <input value={name} maxLength={200} onChange={e => setName(e.target.value)} style={{ ...inputStyle, width: '100%' }} placeholder="e.g. Replacement bracket" />
           </div>
           <div>
-            <label style={labelStyle}>Printer model *</label>
+            <label style={labelStyle}>Printer Model *</label>
             <select value={model} onChange={e => setModel(e.target.value)} style={{ ...inputStyle, width: '100%' }}>
               <option value="">Select…</option>
               {models.map(m => <option key={m.model_id} value={m.model_id}>{m.label}</option>)}
@@ -247,16 +247,16 @@ export default function QuickPrint() {
             <input type="number" min="1" max="1000" value={copies} onChange={e => setCopies(e.target.value)} style={{ ...inputStyle, width: '100%' }} />
           </div>
           <div>
-            <label style={labelStyle}>Parts per plate</label>
+            <label style={labelStyle}>Parts per Plate</label>
             <input type="number" min="1" max="1000" value={perPlate} onChange={e => setPerPlate(e.target.value)} style={{ ...inputStyle, width: '100%' }} />
           </div>
           {isBambu && (
             <div>
-              <label style={labelStyle}>Filament source</label>
+              <label style={labelStyle}>Filament Source</label>
               <select value={amsSlot} onChange={e => setAmsSlot(e.target.value)} style={{ ...inputStyle, width: '100%' }}>
                 <option value={AMS_MATCH}>Match from AMS</option>
-                <option value="-1">External spool</option>
-                {[0, 1, 2, 3].map(n => <option key={n} value={String(n)}>Fixed: AMS slot {n + 1}</option>)}
+                <option value="-1">External Spool</option>
+                {[0, 1, 2, 3].map(n => <option key={n} value={String(n)}>Fixed: AMS Slot {n + 1}</option>)}
               </select>
             </div>
           )}
@@ -292,7 +292,7 @@ export default function QuickPrint() {
         </div>
       </form>
 
-      <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Recent quick prints</h2>
+      <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Recent Quick Prints</h2>
       {list?.project && (projectStatus === 'paused' || projectStatus === 'draft') && (
         <div style={{ background: '#78350f', border: '1px solid #92400e', borderRadius: 8, padding: '8px 14px', marginBottom: 10, color: '#fbbf24', fontSize: 13 }}>
           The Quick prints project is {projectStatus}, so nothing here will start. Set it to Active on the <Link to="/projects" style={{ color: '#fde68a' }}>Projects</Link> page.
