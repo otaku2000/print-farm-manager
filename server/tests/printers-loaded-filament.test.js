@@ -1,7 +1,7 @@
 // Tests for GET /api/printers/loaded-filament, GET /api/printers/:id/loaded-filament,
 // and the filament_auto field on PUT /api/printers/:id
 
-jest.mock('../drivers/bambu', () => ({ getLoadedFilament: jest.fn() }));
+jest.mock('../drivers/bambu', () => ({ getLoadedFilament: jest.fn(), getNozzles: jest.fn(() => null) }));
 jest.mock('../events', () => ({ insert: jest.fn() }));
 
 const request  = require('supertest');
@@ -62,12 +62,13 @@ const SAMPLE = {
 
 test('returns live filament for active Bambu printers, keyed by printer id', async () => {
   bambu.getLoadedFilament.mockImplementation(p => (p.name === 'BL-H2S-003' ? SAMPLE : null));
+  bambu.getNozzles.mockImplementation(p => (p.name === 'BL-H2S-003' ? [{ id: 0, diameter: 0.4, type: 'HS01' }] : null));
 
   const res = await request(app).get('/api/printers/loaded-filament');
 
   expect(res.status).toBe(200);
   const id = db.prepare("SELECT id FROM printers WHERE name = 'BL-H2S-003'").get().id;
-  expect(res.body).toEqual({ [id]: SAMPLE });
+  expect(res.body).toEqual({ [id]: { ...SAMPLE, nozzles: [{ id: 0, diameter: 0.4, type: 'HS01' }] } });
 });
 
 test('asks the driver only about active Bambu printers', async () => {
@@ -82,24 +83,25 @@ test('asks the driver only about active Bambu printers', async () => {
 describe('GET /api/printers/:id/loaded-filament', () => {
   const idOf = name => db.prepare('SELECT id FROM printers WHERE name = ?').get(name).id;
 
-  test('returns the live filament for a Bambu printer', async () => {
+  test('returns the live filament and nozzles for a Bambu printer', async () => {
     bambu.getLoadedFilament.mockReturnValue(SAMPLE);
+    bambu.getNozzles.mockReturnValueOnce([{ id: 0, diameter: 0.4, type: 'HS01' }]);
     const res = await request(app).get(`/api/printers/${idOf('BL-H2S-003')}/loaded-filament`);
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ filament: SAMPLE });
+    expect(res.body).toEqual({ filament: SAMPLE, nozzles: [{ id: 0, diameter: 0.4, type: 'HS01' }] });
   });
 
   test('null for a Bambu printer that has not reported', async () => {
     bambu.getLoadedFilament.mockReturnValue(null);
     const res = await request(app).get(`/api/printers/${idOf('BL-H2S-004')}/loaded-filament`);
-    expect(res.body).toEqual({ filament: null });
+    expect(res.body).toEqual({ filament: null, nozzles: null });
   });
 
   test('null without asking the driver for a non-Bambu or decommissioned printer', async () => {
     for (const name of ['MK4_01', 'BL-OLD']) {
       const res = await request(app).get(`/api/printers/${idOf(name)}/loaded-filament`);
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ filament: null });
+      expect(res.body).toEqual({ filament: null, nozzles: null });
     }
     expect(bambu.getLoadedFilament).not.toHaveBeenCalled();
   });

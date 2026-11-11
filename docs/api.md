@@ -99,10 +99,11 @@ No parameters. Always `200`.
 - `trays`: every tray including empty ones. `slot` is `ams_id * 4 + slot_id` (0-based; the printer screen shows it plus 1). `type` is the generic filament type (`tray_type`) and `name` the product (`tray_sub_brands`, such as "PETG HF", falling back to `type`); both are `null` when the tray is empty. `color` is `RRGGBB` or `null`. `remain` is the percent of filament left, or `null` when the printer does not know it: Bambu reports -1 for a spool without a Bambu RFID tag.
 - `external`: `{ "type", "color" }` when a spool is on the external holder, else `null`.
 - `active_slot`: the tray feeding now, `-1` for the external spool, `null` for none.
+- `nozzles`: installed nozzles as `[{ "id": 0, "diameter": 0.4, "type": "HS01" }]`, or `null` when not reported. On a two-nozzle printer id `0` is the right nozzle and `1` the left (docs/multi-brand.md, Bambu nozzle size).
 
 ### `GET /api/printers/:id/loaded-filament`
 
-The same live AMS contents for one printer, as `{ "filament": { ... } }` in the shape above. `filament` is `null` for a non-Bambu or decommissioned printer, or one that has not reported its AMS yet. `404` if the printer does not exist. Used by the Printer Detail view.
+The same live AMS contents for one printer, as `{ "filament": { ... }, "nozzles": [ ... ] }` in the shape above. `filament` is `null` for a non-Bambu or decommissioned printer, or one that has not reported its AMS yet. `404` if the printer does not exist. Used by the Printer Detail view.
 
 ---
 
@@ -476,7 +477,7 @@ Diagnostic for the "Why isn't this printing?" button on the Projects page. Mirro
 - `reasons`: populated when `dispatchable` is `false`: global blockers (project not active, part complete, no G-code, remaining qty already covered by in-progress jobs) followed by per-G-code availability problems (no printers of that model, group/material/color mismatch, all matching printers busy or held).
 - `notes`: populated when `dispatchable` is `true`: advisory per-G-code items (e.g. one G-code can dispatch but another has no ready printers), and a note when every ready matching printer would print a higher-priority part first.
 - `gcodes[]`: one entry per G-code, with the effective targeting after the gcode-overrides-project cascade (`allowed_groups` is a parsed array or `null`).
-- `gcodes[].printers[]`: every active printer of that model, ordered by name, including its `model`. `state` is checked in this order: `wrong_group`, `wrong_filament`, `held` (awaiting operator sign-off), `busy` (not IDLE, FINISHED, or STOPPED, or holding an `uploading`/`printing` job row), `ready`.
+- `gcodes[].printers[]`: every active printer of that model, ordered by name, including its `model`. `state` is checked in this order: `wrong_group`, `wrong_filament`, `wrong_nozzle` (the file is sliced for a different nozzle size than the printer has installed; `nozzle_problem` says why, else it is `null`), `held` (awaiting operator sign-off), `busy` (not IDLE, FINISHED, or STOPPED, or holding an `uploading`/`printing` job row), `ready`.
 - `gcodes[].mismatch`: when no printer matches this G-code's targeting at all, the same sentence that appears in `reasons`/`notes` for it; `null` otherwise. `GET /api/parts/queue` uses it as the no-match reason.
 - `gcodes[].printers[].next_up`: for `ready` printers only, the part the scheduler would dispatch to that printer right now, computed with the scheduler's own candidate query (`server/candidate-query.js`) and ceiling skip; `null` otherwise. Read-only: no job row is written.
 

@@ -7,6 +7,7 @@ const router  = express.Router();
 const { normalizePrintTime } = require('../estimate-input');
 const { candidateSql, PROJECTION_COLUMNS } = require('../candidate-query');
 const printerFilaments = require('../printer-filaments');
+const { nozzleMismatchFor } = require('../nozzle-compat');
 const { fingerprint } = require('../schedule-state');
 
 const GCODE_DIR = path.join(__dirname, '..', 'gcode');
@@ -79,6 +80,8 @@ module.exports = (db, scheduler = null) => {
       if (!row) return null;
       const remaining = Math.max(0, row.target_qty - row.completed_qty);
       if (activePartsStmt.get(row.part_id).total >= remaining) { skip.push(row.part_id); continue; }
+      // Mirrors _reserveJob's nozzle-size skip (server/nozzle-compat.js).
+      if (nozzleMismatchFor(printer, row.filepath)) { skip.push(row.part_id); continue; }
       return row;
     }
   }
@@ -114,10 +117,12 @@ module.exports = (db, scheduler = null) => {
   // One printer's standing against one G-code's targeting. States are checked in the
   // same order the prose reasons use (group, then filament, then availability) so the
   // list and the sentence above it never disagree about why a printer is out.
-  function describePrinter(ctx, p, partId, { requiredMaterial, requiredColor, allowedGroups }) {
+  function describePrinter(ctx, p, partId, { requiredMaterial, requiredColor, allowedGroups, filepath }) {
     let state;
+    const nozzleProblem = nozzleMismatchFor(p, filepath);
     if (allowedGroups && !allowedGroups.includes(p.group_name))          state = 'wrong_group';
     else if (!printerFilaments.matchesRequirement(ctx.filaments(p), requiredMaterial, requiredColor)) state = 'wrong_filament';
+    else if (nozzleProblem)                                              state = 'wrong_nozzle';
     else if (p.is_held === 1)                                            state = 'held';
     else if (!isDispatchReady(p) || ctx.busyPrinterIds.has(p.id))        state = 'busy';
     else                                                                 state = 'ready';
@@ -146,6 +151,7 @@ module.exports = (db, scheduler = null) => {
       loaded_color:    p.loaded_color,
       filament_auto:   printerFilaments.isAuto(p) ? 1 : 0,
       filament_label:  printerFilaments.describeFilaments(p, ctx.filaments(p)),
+      nozzle_problem:  nozzleProblem,
       state,
       next_up:         nextUp,
     };
@@ -207,7 +213,7 @@ module.exports = (db, scheduler = null) => {
         required_material: requiredMaterial,
         required_color:    requiredColor,
         allowed_groups:    allowedGroups,
-        printers:          modelPrinters.map(p => describePrinter(ctx, p, part.id, { requiredMaterial, requiredColor, allowedGroups })),
+        printers:          modelPrinters.map(p => describePrinter(ctx, p, part.id, { requiredMaterial, requiredColor, allowedGroups, filepath: gc.filepath })),
         mismatch:          null,
       };
       gcodeDetails.push(detail);
@@ -235,13 +241,21 @@ module.exports = (db, scheduler = null) => {
         continue;
       }
 
+      // Mirrors _reserveJob's nozzle-size skip (server/nozzle-compat.js).
+      const nozzleOk = materialOk.filter(p => !nozzleMismatchFor(p, gc.filepath));
+      if (nozzleOk.length === 0) {
+        detail.mismatch = `${gc.filename}: ${nozzleMismatchFor(materialOk[0], gc.filepath)} on every matching printer`;
+        notes.push(detail.mismatch);
+        continue;
+      }
+
       // Mirrors sweepIdlePrinters eligibility: unheld STOPPED printers are
       // dispatchable (Bambu latches the stopped state until the next print starts).
-      const ready = materialOk.filter(p => isDispatchReady(p) && !ctx.busyPrinterIds.has(p.id));
+      const ready = nozzleOk.filter(p => isDispatchReady(p) && !ctx.busyPrinterIds.has(p.id));
       if (ready.length === 0) {
-        const held = materialOk.filter(p => p.is_held === 1).length;
+        const held = nozzleOk.filter(p => p.is_held === 1).length;
         notes.push(
-          `${gc.filename}: all ${materialOk.length} matching printer(s) are busy` +
+          `${gc.filename}: all ${nozzleOk.length} matching printer(s) are busy` +
           (held > 0 ? ` (${held} awaiting operator sign-off)` : '')
         );
       } else {

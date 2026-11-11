@@ -44,6 +44,7 @@ const MATCH_STATE = {
   busy:           { text: '#93c5fd', label: 'Busy' },
   held:           { text: '#fcd34d', label: 'Awaiting sign-off' },
   wrong_filament: { text: '#fca5a5', label: 'Wrong filament' },
+  wrong_nozzle:   { text: '#fca5a5', label: 'Wrong nozzle' },
   wrong_group:    { text: '#94a3b8', label: 'Not in allowed group' },
   unknown:        { text: '#94a3b8', label: 'Unknown' },
 };
@@ -80,6 +81,8 @@ function PrinterMatchList({ gcodes, partId }) {
                     else next = `Next up: ${p.next_up.part_name} (${p.next_up.project_name}), higher priority`;
                   } else if (p.state === 'busy' || p.state === 'held') {
                     next = p.status;
+                  } else if (p.state === 'wrong_nozzle' && p.nozzle_problem) {
+                    next = p.nozzle_problem.charAt(0).toUpperCase() + p.nozzle_problem.slice(1);
                   }
                   return (
                     <div key={p.id} style={{ display: 'contents' }}>

@@ -78,8 +78,9 @@ const SCHEDULER_COLUMNS = `          parts.id          AS part_id,
           COALESCE(gcodes.required_material, projects.required_material) AS required_material,
           COALESCE(gcodes.required_color, projects.required_color)       AS required_color`;
 
-// The projection additionally needs the two time estimates (to size a block) and the
-// display names (to label one).
+// The projection additionally needs the two time estimates (to size a block), the
+// display names (to label one), and the file path (for the nozzle-size skip that dispatch
+// also applies, server/nozzle-compat.js).
 const PROJECTION_COLUMNS = `          parts.id          AS part_id,
           parts.name        AS part_name,
           parts.target_qty,
@@ -89,6 +90,7 @@ const PROJECTION_COLUMNS = `          parts.id          AS part_id,
           projects.name     AS project_name,
           gcodes.id         AS gcode_id,
           gcodes.filename,
+          gcodes.filepath,
           gcodes.parts_per_plate,
           gcodes.est_print_secs`;
 

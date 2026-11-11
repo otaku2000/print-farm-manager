@@ -29,6 +29,7 @@ const path     = require('path');
 const tls      = require('tls');
 const tunnel   = require('./bambu-tunnel');
 const ams      = require('./bambu-ams');
+const nozzles  = require('./bambu-nozzles');
 
 // FTP reply when the server cannot create the file. An H2-series printer sends it for an
 // upload to its FTP root when no drive is inserted.
@@ -256,13 +257,33 @@ function getAmsSlots(printer) {
 const AMS_REPORT_WAIT_MS = 20000;
 const AMS_REPORT_POLL_MS = 250;
 
-// Resolves once the connection has an AMS report, or after timeoutMs (the caller's mapping
-// step then refuses the dispatch).
-async function waitForAmsReport(conn, timeoutMs) {
+// Resolves once the cached report satisfies `ready`, or after timeoutMs (the caller's check
+// then decides what an absent report means).
+async function waitForReport(conn, ready, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
-  while (!Array.isArray(conn.latestPrint?.ams?.ams) && Date.now() < deadline) {
+  while (!ready(conn.latestPrint) && Date.now() < deadline) {
     await new Promise(r => setTimeout(r, AMS_REPORT_POLL_MS));
   }
+}
+
+// Resolves once the connection has an AMS report, or after timeoutMs (the caller's mapping
+// step then refuses the dispatch).
+function waitForAmsReport(conn, timeoutMs) {
+  return waitForReport(conn, r => Array.isArray(r?.ams?.ams), timeoutMs);
+}
+
+// Installed nozzles from the cached report: [{ id, diameter, type }] (id 0 is the right
+// nozzle on a two-nozzle printer, see bambu-nozzles.js), or null before the first report.
+// Never opens a connection.
+function getNozzles(printer) {
+  return nozzles.liveNozzles(connections.get(printer.id)?.latestPrint);
+}
+
+// Why this printer cannot print this file because of its nozzle, or null when it can or
+// either side is unknown. Synchronous and cached per file, so the scheduler can call it
+// while choosing work. Never opens a connection.
+function nozzleMismatch(printer, gcodeFullPath) {
+  return nozzles.nozzleMismatch(nozzles.readPlateNozzles(gcodeFullPath), getNozzles(printer));
 }
 
 // Live loaded filament for display, from the cached MQTT report. Never opens a connection.
@@ -343,6 +364,24 @@ async function uploadAndPrint(printer, gcodeFullPath, _filename, options = {}) {
     latestPrint: conn.latestPrint,
   });
   if (mapping.note) console.log(`[bambu] ${printer.name}: ${mapping.note}`);
+
+  // Refuse a file sliced for a different nozzle size than the nozzle it would print on
+  // (bambu-nozzles.js). The scheduler skips such printers already; this is the last check,
+  // made after waiting for the first report on a new connection.
+  const requiredNozzles = nozzles.readPlateNozzles(gcodeFullPath);
+  if (requiredNozzles && !nozzles.liveNozzles(conn.latestPrint)) {
+    await waitForReport(conn, r => !!nozzles.liveNozzles(r), options.amsReportWaitMs ?? AMS_REPORT_WAIT_MS);
+  }
+  const installedNozzles = nozzles.liveNozzles(conn.latestPrint);
+  const nozzleProblem = nozzles.nozzleMismatch(requiredNozzles, installedNozzles);
+  if (nozzleProblem) {
+    const err = new Error(`${printer.name}: ${nozzleProblem}`);
+    err.code = 'NOZZLE_MISMATCH';
+    throw err;
+  }
+  if (requiredNozzles && !installedNozzles) {
+    console.warn(`[bambu] ${printer.name} has not reported its nozzles, so the nozzle size was not checked`);
+  }
 
   const usedInternalStorage = await uploadToPrinter(printer, gcodeFullPath, onPrinterFilename);
 
@@ -532,4 +571,4 @@ async function checkIfPrinting(printer) {
   return status === 'PRINTING' || status === 'PAUSED';
 }
 
-module.exports = { getStatus, uploadAndPrint, cancelJob, checkIfPrinting, getAmsSlots, getLoadedFilament, deleteFile, dropConnection, openDataConnection };
+module.exports = { getStatus, uploadAndPrint, cancelJob, checkIfPrinting, getAmsSlots, getLoadedFilament, getNozzles, nozzleMismatch, deleteFile, dropConnection, openDataConnection };
