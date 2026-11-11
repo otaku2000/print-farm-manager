@@ -453,7 +453,7 @@ export default function Dashboard() {
                         borderTop: '1px solid #1a2030', marginTop: 10, paddingTop: 8,
                         display: 'flex', alignItems: 'center', gap: 10, fontSize: 11, flexWrap: 'wrap',
                       }}>
-                        <span style={{ fontWeight: 700, color: '#cbd5e1' }}>So far</span>
+                        <span style={{ fontWeight: 700, color: '#cbd5e1' }}>So Far</span>
                         <span style={{ color: '#374151' }}>·</span>
                         {proj.elapsed_secs > 0 && (
                           <span style={{ color: '#94a3b8' }}>{formatDuration(proj.elapsed_secs)}</span>

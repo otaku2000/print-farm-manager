@@ -706,7 +706,7 @@ export default function Settings() {
         )}
         <form onSubmit={handleAddType} style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginBottom: 24 }}>
           <div style={{ flex: 1 }}>
-            <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>Type name *</label>
+            <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>Type Name *</label>
             <input
               value={typeForm.name}
               onChange={e => setTypeForm(p => ({ ...p, name: e.target.value }))}
@@ -785,7 +785,7 @@ export default function Settings() {
             </select>
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>Color name *</label>
+            <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>Color Name *</label>
             <input
               value={colorForm.name}
               onChange={e => setColorForm(p => ({ ...p, name: e.target.value }))}
@@ -1146,7 +1146,7 @@ export default function Settings() {
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <div>
             <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>
-              Concurrent printers (1-100)
+              Concurrent Printers (1-100)
             </label>
             <input
               type="number"

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useModelLabel } from '../useModelLabel';
 import { createPortal } from 'react-dom';
 import { Link, useLocation } from 'react-router-dom';
 import { useToast } from '../useToast';
@@ -55,6 +56,7 @@ const MATCH_STATE = {
 // the scheduler would actually hand it next. Each name links to the printer's detail
 // page, where loaded material and color are set.
 function PrinterMatchList({ gcodes, partId }) {
+  const modelLabel = useModelLabel();
   if (!gcodes || gcodes.length === 0) return null;
   return (
     <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -64,10 +66,10 @@ function PrinterMatchList({ gcodes, partId }) {
         return (
           <div key={g.gcode_id}>
             <div style={{ color: '#e2e8f0', fontWeight: 600 }}>
-              {g.filename} <span style={{ color: '#64748b', fontWeight: 400 }}>needs {g.printer_model}, {want}, {groups}</span>
+              {g.filename} <span style={{ color: '#64748b', fontWeight: 400 }}>needs {modelLabel(g.printer_model)}, {want}, {groups}</span>
             </div>
             {g.printers.length === 0 ? (
-              <div style={{ color: '#64748b' }}>No active {g.printer_model} printers.</div>
+              <div style={{ color: '#64748b' }}>No active {modelLabel(g.printer_model)} printers.</div>
             ) : (
               <div className="match-table" style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1fr) minmax(90px, auto) minmax(110px, auto) 2fr', columnGap: 12, rowGap: 2 }}>
                 {g.printers.map(p => {
@@ -390,7 +392,7 @@ function GcodeUploadPanel({ part, onUploaded, filamentTypes, filamentColors, pro
           </label>
         </div>
         <div>
-          <div style={uploadLabelSx}>Parts per plate *</div>
+          <div style={uploadLabelSx}>Parts per Plate *</div>
           <input
             type="number"
             min={1}
@@ -402,7 +404,7 @@ function GcodeUploadPanel({ part, onUploaded, filamentTypes, filamentColors, pro
           />
         </div>
         <div>
-          <div style={uploadLabelSx}>Printer model *</div>
+          <div style={uploadLabelSx}>Printer Model *</div>
           <select
             value={model}
             onChange={(e) => setModel(e.target.value)}
@@ -414,7 +416,7 @@ function GcodeUploadPanel({ part, onUploaded, filamentTypes, filamentColors, pro
         </div>
         {isBambuModel && (
           <div>
-            <div style={uploadLabelSx}>Filament source</div>
+            <div style={uploadLabelSx}>Filament Source</div>
             <select
               value={amsSlot}
               onChange={(e) => setAmsSlot(e.target.value)}
@@ -422,9 +424,9 @@ function GcodeUploadPanel({ part, onUploaded, filamentTypes, filamentColors, pro
               style={{ ...inputSx, width: 190 }}
             >
               <option value={AMS_MATCH}>Match from AMS</option>
-              <option value="-1">External spool</option>
+              <option value="-1">External Spool</option>
               {fixedSlotOptions(amsSlots).map(n => (
-                <option key={n} value={String(n)}>Fixed: AMS slot {n + 1}</option>
+                <option key={n} value={String(n)}>Fixed: AMS Slot {n + 1}</option>
               ))}
             </select>
           </div>
@@ -526,6 +528,7 @@ function GcodeUploadPanel({ part, onUploaded, filamentTypes, filamentColors, pro
 }
 
 function GcodeEstimateRow({ gc, onDelete, onSaved, filamentTypes, filamentColors, projectMaterial, projectColor, projectGroups, groups }) {
+  const modelLabel = useModelLabel();
   const [timeDraft, setTimeDraft]         = useState(formatDurationForInput(gc.est_print_secs));
   const [materialDraft, setMaterialDraft] = useState(formatMaterialForInput(gc.material_grams));
   const [parsing, setParsing]             = useState(false);
@@ -609,7 +612,7 @@ function GcodeEstimateRow({ gc, onDelete, onSaved, filamentTypes, filamentColors
           background: '#1e3a5f', color: '#60a5fa', borderRadius: 3,
           padding: '1px 6px', fontSize: 11, fontWeight: 700, flexShrink: 0,
         }}>
-          {gc.printer_model}
+          {modelLabel(gc.printer_model)}
         </span>
         <button
           onClick={onDelete}
@@ -925,7 +928,7 @@ function PartDetailsPanel({ part, gcodes, onRefresh, onSaved, onConfirm, filamen
               style={{ color: '#64748b', fontSize: 12, cursor: 'help', borderBottom: '1px dotted #334155', alignSelf: 'flex-start' }}
               title="Estimated time to print one plate, used by the Schedule page. A G-code's own estimate always wins over this; leave it blank and the schedule falls back to 2 hours, marked as unknown."
             >
-              Est. print time
+              Est. Print Time
             </label>
             <input
               type="text"
@@ -1477,7 +1480,7 @@ export default function Projects() {
                 All parts and G-code files will be copied. The new project starts as a draft with all quantities reset to zero.
               </div>
               <label style={{ color: '#94a3b8', fontSize: 12, display: 'block', marginBottom: 6 }}>
-                New project name
+                New Project Name
               </label>
               <input
                 type="text"
@@ -1969,7 +1972,7 @@ export default function Projects() {
         </h3>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label style={{ color: '#64748b', fontSize: 12 }}>Part name *</label>
+            <label style={{ color: '#64748b', fontSize: 12 }}>Part Name *</label>
             <input
               type="text"
               value={newPartName}
@@ -1980,7 +1983,7 @@ export default function Projects() {
             />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label style={{ color: '#64748b', fontSize: 12 }}>Target qty *</label>
+            <label style={{ color: '#64748b', fontSize: 12 }}>Target Qty *</label>
             <input
               type="number"
               min={1}
@@ -1996,7 +1999,7 @@ export default function Projects() {
               style={{ color: '#64748b', fontSize: 12, cursor: 'help', borderBottom: '1px dotted #334155', alignSelf: 'flex-start' }}
               title="Optional. Estimated time to print one plate, used to size this part's blocks on the Schedule page. Uploading a sliced file later replaces it with the slicer's own figure. Leave blank to use 2 hours, marked as unknown on the schedule."
             >
-              Est. print time
+              Est. Print Time
             </label>
             <input
               type="text"

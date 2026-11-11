@@ -2,6 +2,15 @@
 
 ---
 
+## 2026-11-11: Consistent letter casing in the UI
+
+Labels, buttons, and headings mixed Title Case ("Add Printer", "Loaded Material", "Sweep for Jobs") with lower case ("Recent quick prints", "Printer model", "Add task", "Expand all"), and printer models showed as lower-case ids ("h2d") on several pages while Fleet group headers used the label ("H2D"). Headings, section titles, buttons, form labels, column headers, chips, and fixed menu options now use Title Case (short words such as "of", "per", "to" stay lower case, as do qualifiers in brackets such as "(optional)"); sentences, hints, placeholders, and status messages stay in sentence case. Printer models now show the label from Settings > Printer Models everywhere ("H2D", "Prusa XL").
+
+### Changes
+- `client/src/useModelLabel.js` (new): turns a model id into its label, fetched once and shared.
+- `client/src/pages/Fleet.jsx`, `Decommissioned.jsx`, `Maintenance.jsx`, `PrinterDetail.jsx`, `PrintQueue.jsx`, `Projects.jsx`, `Schedule.jsx`: model labels instead of ids.
+- `client/src/pages/Maintenance.jsx`, `QuickPrint.jsx`, `Projects.jsx`, `Printers.jsx`, `Jobs.jsx`, `PartAudit.jsx`, `Schedule.jsx`, `Dashboard.jsx`, `Settings.jsx`, `PrinterDetail.jsx`, `Fleet.jsx`, `PrintQueue.jsx`: Title Case for labels, buttons, headings, and chips.
+
 ## 2026-11-11: Maintenance split into separate tasks
 
 Maintenance was one service on one interval (90 days or 2000 print hours), but the jobs on an FDM printer run on very different clocks: the build plate needs cleaning every week, the rods and lead screws every few months. The Maintenance page now tracks separate tasks, each with its own interval in days and/or print hours, per printer: clean the build plate, clean the nozzle and check for clogs, clean the purge chute and nozzle wiper, clean and lube the rods, clean and grease the lead screws, replace the filters, check belt tension, clean the extruder gears and filament path, clean the AMS and replace desiccant, clean the fans and heatsinks, inspect the hotend and nozzle for wear, and tighten screws and inspect wiring. The list and intervals are editable on the page; the defaults are general FDM guidance, not a printer maker's schedule.

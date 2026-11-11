@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useModelLabel } from '../useModelLabel';
 import { useToast } from '../useToast';
 import { useConfirm } from '../useConfirm';
 
@@ -64,7 +65,7 @@ function statusChip(s) {
     const why = s.overdue_reason === 'hours' ? 'print hours' : s.overdue_reason === 'both' ? 'days and hours' : 'days';
     return { text: `Overdue (${why})`, bg: '#78350f', color: '#fbbf24' };
   }
-  if (s.due_soon) return { text: 'Due soon', bg: '#422006', color: '#fcd34d' };
+  if (s.due_soon) return { text: 'Due Soon', bg: '#422006', color: '#fcd34d' };
   return { text: 'OK', bg: '#14532d', color: '#86efac' };
 }
 
@@ -163,7 +164,7 @@ function TaskSettings({ onChanged, showToast, confirm }) {
     <div style={{ ...cardStyle, marginBottom: 16 }}>
       <div onClick={() => setOpen(o => !o)} style={{ padding: '10px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ fontSize: 11, color: '#64748b', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.12s', display: 'inline-block' }}>▶</span>
-        <span style={{ fontWeight: 600, fontSize: 14 }}>Maintenance tasks</span>
+        <span style={{ fontWeight: 600, fontSize: 14 }}>Maintenance Tasks</span>
         <span style={{ color: '#64748b', fontSize: 12 }}>Edit the jobs and how often each is due. Applies to every printer.</span>
       </div>
       {open && (
@@ -177,7 +178,7 @@ function TaskSettings({ onChanged, showToast, confirm }) {
             <span style={{ color: '#64748b', fontSize: 12 }}>days or</span>
             <input type="number" min="1" placeholder="hours" value={hours} onChange={e => setHours(e.target.value)} style={{ ...inputStyle, width: 80 }} />
             <span style={{ color: '#64748b', fontSize: 12 }}>print hrs</span>
-            <button type="submit" style={btn('#2563eb', '#fff')} disabled={!name.trim()}>Add task</button>
+            <button type="submit" style={btn('#2563eb', '#fff')} disabled={!name.trim()}>Add Task</button>
           </form>
           <div style={{ color: '#475569', fontSize: 12, marginTop: 8 }}>
             Leave days or hours empty for no limit of that kind. Default intervals are general FDM guidance; adjust them for your printers and materials.
@@ -191,6 +192,7 @@ function TaskSettings({ onChanged, showToast, confirm }) {
 // ── Per printer ──────────────────────────────────────────────────────────────
 
 function PrinterRow({ p, tasks, onChanged, showToast, confirm }) {
+  const modelLabel = useModelLabel();
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState('');
   const [serviceDate, setServiceDate] = useState(todayIso);
@@ -240,16 +242,16 @@ function PrinterRow({ p, tasks, onChanged, showToast, confirm }) {
   }
 
   const summary = p.overdue_count > 0
-    ? { text: `${p.overdue_count} overdue`, bg: '#78350f', color: '#fbbf24' }
-    : p.due_soon_count > 0 ? { text: `${p.due_soon_count} due soon`, bg: '#422006', color: '#fcd34d' }
-      : { text: 'All up to date', bg: '#14532d', color: '#86efac' };
+    ? { text: `${p.overdue_count} Overdue`, bg: '#78350f', color: '#fbbf24' }
+    : p.due_soon_count > 0 ? { text: `${p.due_soon_count} Due Soon`, bg: '#422006', color: '#fcd34d' }
+      : { text: 'All Up to Date', bg: '#14532d', color: '#86efac' };
   const nextTask = p.tasks.filter(t => t.next_due_at != null).sort((a, b) => a.next_due_at - b.next_due_at)[0];
 
   return (
     <div style={{ ...cardStyle, border: `1px solid ${p.overdue ? '#92400e' : '#1e2433'}`, marginBottom: 8 }}>
       <div onClick={() => setOpen(o => !o)} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 14px', cursor: 'pointer', flexWrap: 'wrap' }}>
         <span style={{ fontWeight: 600, fontSize: 14, minWidth: 120 }}>{p.name}</span>
-        <span style={{ color: '#64748b', fontSize: 12, fontFamily: 'monospace' }}>{p.model}</span>
+        <span style={{ color: '#64748b', fontSize: 12, fontFamily: 'monospace' }}>{modelLabel(p.model)}</span>
         <span style={{ color: '#94a3b8', fontSize: 13, flex: 1, minWidth: 200 }}>
           {nextTask ? <>next: {taskName(nextTask.task_id)} ({fmtDate(nextTask.next_due_at)}, {dueIn(nextTask.next_due_at)})</> : 'no dated tasks'}
         </span>
@@ -265,8 +267,8 @@ function PrinterRow({ p, tasks, onChanged, showToast, confirm }) {
           <div className="mt-table">
             <span />
             <span style={{ color: '#475569', fontSize: 11, fontWeight: 700, textTransform: 'uppercase' }}>Task</span>
-            <span className="mt-hide" style={{ color: '#475569', fontSize: 11, fontWeight: 700, textTransform: 'uppercase' }}>Last done</span>
-            <span className="mt-hide" style={{ color: '#475569', fontSize: 11, fontWeight: 700, textTransform: 'uppercase' }}>Next due</span>
+            <span className="mt-hide" style={{ color: '#475569', fontSize: 11, fontWeight: 700, textTransform: 'uppercase' }}>Last Done</span>
+            <span className="mt-hide" style={{ color: '#475569', fontSize: 11, fontWeight: 700, textTransform: 'uppercase' }}>Next Due</span>
             <span className="mt-hide" style={{ color: '#475569', fontSize: 11, fontWeight: 700, textTransform: 'uppercase' }}>Used</span>
             <span />
             {p.tasks.map(s => {
@@ -295,7 +297,7 @@ function PrinterRow({ p, tasks, onChanged, showToast, confirm }) {
 
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 14, paddingTop: 12, borderTop: '1px solid #1e2433' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#64748b', fontSize: 12 }}>
-              Done on
+              Done On
               <input type="date" value={serviceDate} max={todayIso()} onChange={e => setServiceDate(e.target.value)}
                 style={{ ...inputStyle, width: 150, colorScheme: 'dark' }} />
             </label>
@@ -303,9 +305,9 @@ function PrinterRow({ p, tasks, onChanged, showToast, confirm }) {
               style={{ ...inputStyle, flex: '1 1 200px' }} />
             <button style={{ ...btn(selected.size ? '#2563eb' : '#1e293b', selected.size ? '#fff' : '#64748b') }}
               disabled={!selected.size} onClick={() => log([...selected])}>
-              Log {selected.size || ''} selected task{selected.size === 1 ? '' : 's'}
+              Log {selected.size || ''} Selected Task{selected.size === 1 ? '' : 's'}
             </button>
-            <button style={btn('#1e293b', '#e2e8f0')} onClick={() => log([])}>Log full service (all tasks)</button>
+            <button style={btn('#1e293b', '#e2e8f0')} onClick={() => log([])}>Log Full Service (All Tasks)</button>
           </div>
 
           <div style={{ marginTop: 14 }}>

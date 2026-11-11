@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useModelLabel } from '../useModelLabel';
 import { useNavigate } from 'react-router-dom';
 import PollTimer from '../components/PollTimer';
 import EmptyState from '../components/EmptyState';
@@ -56,6 +57,7 @@ function formatEta(secs) {
 }
 
 function PrinterCard({ printer, selected, onToggleSelect, onSetReady, onBadPrint, onUploadFailed, onDecommission, onLinkJob, onOpenDetail }) {
+  const modelLabel = useModelLabel();
   const shownStatus = displayStatus(printer);
   const style = statusStyle(shownStatus);
   const isUploading = shownStatus === 'UPLOADING';
@@ -145,7 +147,7 @@ function PrinterCard({ printer, selected, onToggleSelect, onSetReady, onBadPrint
         <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
           {printer.maintenanceDue && (
             <span title="Maintenance due" style={{ background: '#78350f', color: '#fbbf24', borderRadius: 4, padding: '2px 6px', fontSize: 11, fontWeight: 700 }}>
-              Service due
+              Service Due
             </span>
           )}
           <span style={{ background: style.bg, color: style.text, borderRadius: 4, padding: '2px 8px', fontSize: 12, fontWeight: 700 }}>
@@ -157,7 +159,7 @@ function PrinterCard({ printer, selected, onToggleSelect, onSetReady, onBadPrint
       {/* Model + group */}
       <div style={{ fontSize: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ background: '#0f172a', borderRadius: 3, padding: '1px 6px', fontFamily: 'monospace', color: '#64748b' }}>
-          {printer.model}
+          {modelLabel(printer.model)}
         </span>
         {printer.group_name && <span style={{ color: '#475569' }}>{printer.group_name}</span>}
         {printer.type === 'bambu' && printer.filament_auto ? (

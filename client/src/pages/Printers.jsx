@@ -13,12 +13,12 @@ const STATUS_COLORS = {
 };
 
 const SUMMARY_PILLS = [
-  { key: 'PRINTING', label: 'printing', bg: '#1e3a5f', text: '#60a5fa' },
-  { key: 'IDLE',     label: 'idle',     bg: '#1a2030', text: '#94a3b8' },
-  { key: 'AWAITING', label: 'awaiting', bg: '#14532d', text: '#4ade80' },
-  { key: 'ERROR',    label: 'error',    bg: '#450a0a', text: '#ef4444' },
-  { key: 'PAUSED',   label: 'paused',   bg: '#451a03', text: '#f59e0b' },
-  { key: 'OFFLINE',  label: 'offline',  bg: '#0d1117', text: '#475569' },
+  { key: 'PRINTING', label: 'Printing', bg: '#1e3a5f', text: '#60a5fa' },
+  { key: 'IDLE',     label: 'Idle',     bg: '#1a2030', text: '#94a3b8' },
+  { key: 'AWAITING', label: 'Awaiting', bg: '#14532d', text: '#4ade80' },
+  { key: 'ERROR',    label: 'Error',    bg: '#450a0a', text: '#ef4444' },
+  { key: 'PAUSED',   label: 'Paused',   bg: '#451a03', text: '#f59e0b' },
+  { key: 'OFFLINE',  label: 'Offline',  bg: '#0d1117', text: '#475569' },
 ];
 
 // Bulk Material value meaning "match against the AMS" (filament_auto = 1).
@@ -286,8 +286,8 @@ export default function Printers() {
           }}
         />
         <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={expandAll} style={toolbarBtn}>Expand all</button>
-          <button onClick={collapseAll} style={toolbarBtn}>Collapse all</button>
+          <button onClick={expandAll} style={toolbarBtn}>Expand All</button>
+          <button onClick={collapseAll} style={toolbarBtn}>Collapse All</button>
         </div>
         <label style={{
           display: 'flex', alignItems: 'center', gap: 6,

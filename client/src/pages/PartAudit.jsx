@@ -406,7 +406,7 @@ export default function PartAudit() {
       <div>
         <button onClick={() => navigate('/projects')} style={backButtonStyle}>← Projects</button>
         <p style={{ color: '#fca5a5' }}>Could not load the audit trail: {loadError}</p>
-        <button onClick={refresh} style={secondaryButtonStyle}>Try again</button>
+        <button onClick={refresh} style={secondaryButtonStyle}>Try Again</button>
       </div>
     );
   }
@@ -518,7 +518,7 @@ export default function PartAudit() {
           {/* Chart */}
           {audit.entries.length > 0 && (
             <div style={cardStyle}>
-              <div style={sectionTitleStyle}>Completed total over time</div>
+              <div style={sectionTitleStyle}>Completed Total Over Time</div>
               <RunningTotalChart
                 entries={audit.entries}
                 failures={audit.uncredited_failures}
@@ -531,7 +531,7 @@ export default function PartAudit() {
 
           {/* By printer */}
           <div style={cardStyle}>
-            <div style={sectionTitleStyle}>By printer</div>
+            <div style={sectionTitleStyle}>By Printer</div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
@@ -552,7 +552,7 @@ export default function PartAudit() {
                     <tr key={p.printer_id ?? 'none'} style={{ borderBottom: '1px solid #1a1f2e' }}>
                       <td style={{ padding: '7px 10px' }}>
                         {p.printer_id == null
-                          ? <span style={{ color: '#94a3b8' }}>No printer <span style={{ color: '#475569' }}>(manual edits, pre-tracking)</span></span>
+                          ? <span style={{ color: '#94a3b8' }}>No Printer <span style={{ color: '#475569' }}>(manual edits, pre-tracking)</span></span>
                           : <PrinterRef id={p.printer_id} name={p.printer_name} exists={p.printer_exists} />}
                       </td>
                       <td style={numCell}>{p.plates}</td>
@@ -583,9 +583,9 @@ export default function PartAudit() {
               <div style={{ ...sectionTitleStyle, marginBottom: 0 }}>Timeline ({filteredRows.length.toLocaleString()})</div>
               <div className="audit-filters" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginLeft: 'auto' }}>
                 <select value={printerFilter} onChange={e => setPrinterFilter(e.target.value)} style={selectStyle} aria-label="Filter by printer">
-                  <option value="all">All printers</option>
+                  <option value="all">All Printers</option>
                   {printers.map(p => p.printer_id == null
-                    ? <option key="none" value="none">No printer</option>
+                    ? <option key="none" value="none">No Printer</option>
                     : <option key={p.printer_id} value={String(p.printer_id)}>{p.printer_name}</option>)}
                 </select>
                 <select value={kindFilter} onChange={e => setKindFilter(e.target.value)} style={selectStyle} aria-label="Filter by event type">

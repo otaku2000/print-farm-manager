@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useModelLabel } from '../useModelLabel';
 import { Link } from 'react-router-dom';
 import { useToast } from '../useToast';
 import EmptyState from '../components/EmptyState';
@@ -27,12 +28,12 @@ const MATCH_STATE = {
   unknown: { bg: '#1f2937', border: '#2d3748', text: '#94a3b8', label: 'Unknown' },
 };
 
-function tagTitle(m) {
+function tagTitle(m, modelLabel) {
   const st = MATCH_STATE[m.state] || MATCH_STATE.unknown;
   const loaded = m.filament_auto
     ? m.filament_label
     : [m.loaded_material, m.loaded_color].filter(Boolean).join(' / ') || 'no filament set';
-  const lines = [`${m.name} (${m.model})`, `${st.label}, printer reports ${m.status}`, `Loaded: ${loaded}`, `G-code: ${m.filename}`];
+  const lines = [`${m.name} (${modelLabel(m.model)})`, `${st.label}, printer reports ${m.status}`, `Loaded: ${loaded}`, `G-code: ${m.filename}`];
   if (m.group_name) lines.splice(1, 0, `Group: ${m.group_name}`);
   if (m.state === 'ready' && m.next_up) {
     lines.push(m.next_up.is_this_part
@@ -43,12 +44,13 @@ function tagTitle(m) {
 }
 
 function PrinterTag({ match }) {
+  const modelLabel = useModelLabel();
   const st = MATCH_STATE[match.state] || MATCH_STATE.unknown;
   const isNext = match.state === 'ready' && match.next_up?.is_this_part;
   return (
     <Link
       to={`/printers/${match.id}`}
-      title={tagTitle(match)}
+      title={tagTitle(match, modelLabel)}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 5,
         background: st.bg, border: `1px solid ${isNext ? st.text : st.border}`,
@@ -99,7 +101,7 @@ function QueueRow({ part }) {
           </div>
         ) : (
           <div>
-            <div style={{ color: '#f87171', fontSize: 12, fontWeight: 700, marginBottom: 4 }}>No matching printer</div>
+            <div style={{ color: '#f87171', fontSize: 12, fontWeight: 700, marginBottom: 4 }}>No Matching Printer</div>
             <ul style={{ margin: 0, paddingLeft: 18, color: '#fca5a5', fontSize: 12.5, lineHeight: 1.6 }}>
               {part.no_match_reasons.map((r) => <li key={r} style={{ overflowWrap: 'anywhere' }}>{r}</li>)}
             </ul>
