@@ -192,6 +192,38 @@ CREATE TABLE IF NOT EXISTS printer_events (
 
 **Backfill migration:** on first server start after this table was introduced, any printer with `is_active = 0` and `decommissioned_at` set automatically receives a synthetic `decommission` event using the stored timestamp and note — idempotent across restarts.
 
+### maintenance_tasks
+
+The separate maintenance jobs, farm-wide (`server/maintenance-tasks.js`, created by `ensureSchema` from `db.js`). Seeded once with general FDM defaults; the `maintenance_tasks_seeded` setting records that, so a deleted default stays deleted. Exported and restored by the backup routes.
+
+```sql
+CREATE TABLE IF NOT EXISTS maintenance_tasks (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  name           TEXT NOT NULL,
+  description    TEXT,
+  interval_days  INTEGER,             -- null = no day limit
+  interval_hours INTEGER,             -- null = no print-hour limit (at least one is set)
+  sort_order     INTEGER NOT NULL DEFAULT 0,
+  is_active      INTEGER NOT NULL DEFAULT 1,  -- 0 = disabled: kept for history, not tracked
+  created_at     INTEGER NOT NULL
+);
+```
+
+### printer_maintenance
+
+The maintenance log. `task_id` (added with maintenance tasks) names the job done; NULL is a full service, which counts as every task done. Entries logged before tasks existed are NULL, so they keep meaning "serviced".
+
+```sql
+CREATE TABLE IF NOT EXISTS printer_maintenance (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  printer_id   INTEGER NOT NULL,
+  performed_at INTEGER NOT NULL,      -- when the work was done (epoch ms)
+  note         TEXT,
+  created_at   INTEGER NOT NULL,
+  task_id      INTEGER                -- maintenance_tasks.id, or NULL for a full service
+);
+```
+
 ### part_qty_ledger
 
 Append-only audit trail behind `parts.completed_qty`: one row per change, recording which job and printer it came from and why. The schema lives in `server/partLedger.js` (`ensureSchema`), not inline in `db.js`, so there is one definition.

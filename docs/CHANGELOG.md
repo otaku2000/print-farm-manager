@@ -2,6 +2,20 @@
 
 ---
 
+## 2026-11-11: Maintenance split into separate tasks
+
+Maintenance was one service on one interval (90 days or 2000 print hours), but the jobs on an FDM printer run on very different clocks: the build plate needs cleaning every week, the rods and lead screws every few months. The Maintenance page now tracks separate tasks, each with its own interval in days and/or print hours, per printer: clean the build plate, clean the nozzle and check for clogs, clean the purge chute and nozzle wiper, clean and lube the rods, clean and grease the lead screws, replace the filters, check belt tension, clean the extruder gears and filament path, clean the AMS and replace desiccant, clean the fans and heatsinks, inspect the hotend and nozzle for wear, and tighten screws and inspect wiring. The list and intervals are editable on the page; the defaults are general FDM guidance, not a printer maker's schedule.
+
+Each task can be logged on its own, or all at once as a full service. Existing log entries (one service per printer on Nov 2) carry no task and count as a full service, so every task's clock starts from them. The Fleet page's "Service due" tag now means any task is overdue. The single farm-wide interval and the per-printer overrides (none were set) are retired.
+
+### Changes
+- `server/maintenance-tasks.js` (new): `maintenance_tasks` table, `printer_maintenance.task_id`, and the default task list seeded once; called from `server/db.js`.
+- `server/routes/maintenance.js`: status per task per printer, task list endpoints (`GET/POST /tasks`, `PUT/DELETE /tasks/:id`), `POST /:id/done` takes `task_ids` and returns the new entries, history includes task names; `PUT /:id/intervals` removed.
+- `server/routes/backup.js`: exports and restores `maintenance_tasks` (an older backup without it keeps the current list).
+- `client/src/pages/Maintenance.jsx`: rebuilt around tasks.
+- `server/tests/maintenance.test.js` (rewritten), `server/tests/backup-restore.test.js`: task status, logging, editing, and backup round trip.
+- `docs/api.md`, `docs/database.md`, `docs/web-app.md`: documented.
+
 ## 2026-11-11: Printer model, material and color filled in from the sliced file
 
 A Bambu or Orca sliced .3mf records the printer it was sliced for ("Bambu Lab H2S") and which filament plate 1 prints with: the filament profile ("Bambu PETG HF @BBL H2S") and its color. Picking a file on the Quick Print page or in a part's G-code upload now reads that in the browser and selects the matching Printer model, Material and Color, with a note to check the filament. The printer model comes from the file even when the filename does not name it (the farm's file names such as `H2S_PETG_Bracket Coupler` were not recognized by the filename parser), and matches a farm model by label or id; an unknown printer leaves the field alone. The profile name gives "PETG HF" where the generic type would only say "PETG"; the color is the nearest library color with a hex for that material, by the same rule Auto filament uses. Only the two small metadata entries are read, so a large file is not loaded or uploaded twice. Anything that does not match the library is left for the operator.

@@ -273,6 +273,9 @@ try {
   )`);
   db.exec('CREATE INDEX IF NOT EXISTS idx_maintenance_printer ON printer_maintenance(printer_id, performed_at DESC)');
 } catch (_) {}
+// Separate maintenance jobs, each with its own interval (server/maintenance-tasks.js):
+// creates maintenance_tasks, adds printer_maintenance.task_id, seeds the defaults once.
+require('./maintenance-tasks').ensureSchema(db);
 
 // Make jobs.gcode_id nullable so gcodes can be deleted after jobs have run
 const gcodeIdCol = db.prepare("PRAGMA table_info(jobs)").all().find(c => c.name === 'gcode_id');
