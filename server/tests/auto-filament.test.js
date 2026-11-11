@@ -123,11 +123,11 @@ describe('printerFilaments', () => {
     const db = makeDb();
     bambu.getLoadedFilament.mockReturnValue(H2S_004);
     expect(pf.printerFilaments(db, printerRow(db))).toEqual([
-      { material: 'ABS-GF', color: 'Black', slot: 0 },
-      { material: 'PETG HF', color: 'Black', slot: 1 },
-      { material: 'PETG', color: null, slot: 1 },      // library PETG has no colors with a hex
-      { material: 'ABS-GF', color: null, slot: 2 },    // 0C3B95 is not near any ABS-GF color
-      { material: 'PET-CF', color: null, slot: 3 },    // not in the library at all
+      { material: 'ABS-GF', color: 'Black', slot: 0, nozzle: null },
+      { material: 'PETG HF', color: 'Black', slot: 1, nozzle: null },
+      { material: 'PETG', color: null, slot: 1, nozzle: null },      // library PETG has no colors with a hex
+      { material: 'ABS-GF', color: null, slot: 2, nozzle: null },    // 0C3B95 is not near any ABS-GF color
+      { material: 'PET-CF', color: null, slot: 3, nozzle: null },    // not in the library at all
     ]);
   });
 
@@ -147,7 +147,7 @@ describe('printerFilaments', () => {
   test('nearest color within range wins: Bambu blue 002E96 is the library Blue', () => {
     const db = makeDb();
     bambu.getLoadedFilament.mockReturnValue({ trays: [tray(2, 'PETG', 'PETG HF', '002E96')], external: null, active_slot: null });
-    expect(pf.printerFilaments(db, printerRow(db))[0]).toEqual({ material: 'PETG HF', color: 'Blue', slot: 2 });
+    expect(pf.printerFilaments(db, printerRow(db))[0]).toEqual({ material: 'PETG HF', color: 'Blue', slot: 2, nozzle: null });
   });
 
   test('matchesRequirement and findSlot', () => {
@@ -159,6 +159,24 @@ describe('printerFilaments', () => {
     expect(pf.findSlot(set, 'ABS-GF', null)).toBe(0);
     expect(pf.findSlot(set, 'PLA', null)).toBeNull();
     expect(pf.findSlot(set, null, null)).toBeNull();
+  });
+
+  test('H2D: external holders join the set after the AMS, and findSlot keeps to the file nozzle', () => {
+    const db = makeDb();
+    bambu.getLoadedFilament.mockReturnValue({
+      trays: [{ ...tray(1, 'PETG', 'PETG HF', '000000'), nozzle: 0 }],
+      externals: [
+        { id: 255, nozzle: 0, type: null, name: null, color: null, remain: null },
+        { id: 254, nozzle: 1, type: 'PETG', name: 'PETG HF', color: '000000', remain: null },
+      ],
+      external: null, active_slot: null,
+    });
+    const set = pf.printerFilaments(db, printerRow(db));
+    expect(set.map(f => [f.slot, f.nozzle])).toEqual([[1, 0], [1, 0], [254, 1], [254, 1]]);
+    expect(pf.findSlot(set, 'PETG HF', 'Black')).toBe(1);
+    expect(pf.findSlot(set, 'PETG HF', 'Black', 0)).toBe(1);
+    expect(pf.findSlot(set, 'PETG HF', 'Black', 1)).toBe(254);
+    expect(pf.findSlot([{ material: 'PLA', color: null, slot: 0, nozzle: 0 }], 'PLA', null, 1)).toBeNull();
   });
 });
 

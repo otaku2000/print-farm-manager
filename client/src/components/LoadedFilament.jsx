@@ -51,6 +51,25 @@ function nozzleSide(id, count) {
   return `#${id}`;
 }
 
+// External spool holders: 255 feeds the right nozzle, 254 the left (Bambu Studio's
+// VIRTUAL_TRAY_MAIN_ID / DEPUTY_ID). A printer with one holder reports only 255.
+function externalsOf(filament) {
+  if (Array.isArray(filament.externals)) return filament.externals;
+  return filament.external ? [{ id: 255, nozzle: null, ...filament.external, name: filament.external.type, remain: null }] : [];
+}
+
+function extLabel(ext, list, short) {
+  if (list.length < 2) return short ? 'Ext' : 'External';
+  const side = ext.id === 254 ? 'L' : 'R';
+  return short ? `${side}-Ext` : `${side === 'L' ? 'Left' : 'Right'} Ext`;
+}
+
+// On a two-nozzle printer, the nozzle an AMS tray feeds ("R" or "L"), else ''.
+function traySide(tray, twoNozzles) {
+  if (!twoNozzles || tray.nozzle == null) return '';
+  return tray.nozzle === 1 ? 'L' : 'R';
+}
+
 function mm(d) {
   return `${Number(Number(d).toFixed(2))} mm`;
 }
@@ -80,22 +99,24 @@ export function LoadedFilamentChips({ filament }) {
   if (!filament) {
     return <span style={{ fontSize: 11, color: '#475569' }}>AMS not reported yet</span>;
   }
+  const exts = externalsOf(filament);
+  const twoNozzles = (filament.nozzles?.length ?? 0) > 1 || exts.length > 1;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
       <NozzleChip nozzles={filament.nozzles} />
       <span style={{ fontSize: 10, fontWeight: 700, color: '#475569', letterSpacing: '0.06em' }}>LOADED</span>
       {filament.trays.map(t => (
-        <FilamentChip key={t.slot} label={t.slot + 1} tray={t} active={t.slot === filament.active_slot} />
+        <FilamentChip key={t.slot} label={`${t.slot + 1}${traySide(t, twoNozzles)}`} tray={t} active={t.slot === filament.active_slot} />
       ))}
-      {filament.external && (
-        <FilamentChip label="Ext" tray={{ ...filament.external, name: filament.external.type, remain: null }} active={filament.active_slot === -1} />
-      )}
+      {exts.filter(e => e.type || exts.length > 1).map(e => (
+        <FilamentChip key={e.id} label={extLabel(e, exts, true)} tray={e} active={!!e.type && filament.active_slot === -1} />
+      ))}
     </div>
   );
 }
 
 // One tile per tray for the printer detail page, with a spool level bar.
-function TrayTile({ label, tray, active }) {
+function TrayTile({ label, tray, active, side }) {
   const empty = !tray.type;
   return (
     <div style={{
@@ -107,7 +128,8 @@ function TrayTile({ label, tray, active }) {
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <Swatch color={tray.color} empty={empty} size={14} />
-        <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b' }}>Slot {label}</span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b' }}>{typeof label === 'number' ? `Slot ${label}` : label}</span>
+        {side && <span style={{ fontSize: 10, color: '#475569' }}>{side} nozzle</span>}
         {active && <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, color: '#60a5fa' }}>FEEDING</span>}
       </div>
       <div style={{ fontSize: 13, fontWeight: 600, color: empty ? '#475569' : '#e2e8f0', marginBottom: 8 }}>
@@ -145,6 +167,8 @@ export function LoadedFilamentPanel({ printerId }) {
     return () => clearInterval(timer);
   }, [printerId]);
 
+  const exts = filament ? externalsOf(filament) : [];
+  const twoNozzles = (nozzles?.length ?? 0) > 1 || exts.length > 1;
   return (
     <div style={{
       background: '#131720', border: '1px solid #1e2433',
@@ -171,12 +195,13 @@ export function LoadedFilamentPanel({ printerId }) {
       {filament === null && <span style={{ fontSize: 12, color: '#475569' }}>The printer has not reported its AMS yet.</span>}
       {filament && (
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          {filament.trays.map(t => (
-            <TrayTile key={t.slot} label={t.slot + 1} tray={t} active={t.slot === filament.active_slot} />
+          {filament.trays.map(t => {
+            const side = traySide(t, twoNozzles);
+            return <TrayTile key={t.slot} label={t.slot + 1} side={side === 'L' ? 'Left' : side === 'R' ? 'Right' : ''} tray={t} active={t.slot === filament.active_slot} />;
+          })}
+          {exts.filter(e => e.type || exts.length > 1).map(e => (
+            <TrayTile key={e.id} label={extLabel(e, exts, false)} tray={e} active={!!e.type && filament.active_slot === -1} />
           ))}
-          {filament.external && (
-            <TrayTile label="Ext" tray={{ ...filament.external, name: filament.external.type, remain: null }} active={filament.active_slot === -1} />
-          )}
         </div>
       )}
     </div>

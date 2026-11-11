@@ -513,10 +513,11 @@ describe('getLoadedFilament', () => {
 
     expect(bambu.getLoadedFilament(printer)).toEqual({
       trays: [
-        { slot: 0, ams_id: 0, slot_id: 0, type: 'PETG', name: 'PETG HF', color: '000000', remain: 51 },
-        { slot: 1, ams_id: 0, slot_id: 1, type: null, name: null, color: null, remain: null },
-        { slot: 3, ams_id: 0, slot_id: 3, type: 'PET-CF', name: 'PET-CF', color: '0C3B95', remain: null },
+        { slot: 0, ams_id: 0, slot_id: 0, nozzle: null, type: 'PETG', name: 'PETG HF', color: '000000', remain: 51 },
+        { slot: 1, ams_id: 0, slot_id: 1, nozzle: null, type: null, name: null, color: null, remain: null },
+        { slot: 3, ams_id: 0, slot_id: 3, nozzle: null, type: 'PET-CF', name: 'PET-CF', color: '0C3B95', remain: null },
       ],
+      externals: [],
       external: null,
       active_slot: 3,
     });
@@ -529,6 +530,24 @@ describe('getLoadedFilament', () => {
 
     messageHandler(null, Buffer.from(JSON.stringify({ print: { ams: { tray_now: '255', ams: [] } } })));
     expect(bambu.getLoadedFilament(printer).active_slot).toBeNull();
+  });
+
+  test('H2D: lists both external holders by side and the nozzle each AMS feeds', () => {
+    const printer = nextPrinter();
+    pushStatus(printer, {
+      vir_slot: [
+        { id: '255', tray_type: '', tray_color: '' },
+        { id: '254', tray_type: 'TPU', tray_sub_brands: 'TPU 95A', tray_color: 'FF0000FF', remain: -1 },
+      ],
+      ams: { tray_now: '255', ams: [{ id: '0', info: '10001003', tray: [{ id: '0', tray_type: 'PLA', tray_color: 'FFFFFFFF' }] }] },
+    });
+    const loaded = bambu.getLoadedFilament(printer);
+    expect(loaded.trays[0].nozzle).toBe(0);
+    expect(loaded.externals).toEqual([
+      { id: 255, nozzle: 0, type: null, name: null, color: null, remain: null },
+      { id: 254, nozzle: 1, type: 'TPU', name: 'TPU 95A', color: 'FF0000', remain: null },
+    ]);
+    expect(loaded.external).toEqual({ type: 'TPU', color: 'FF0000' });
   });
 });
 

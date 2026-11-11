@@ -435,11 +435,15 @@ class JobScheduler extends EventEmitter {
       break;
     }
 
-    // An Auto printer matched this part through one particular AMS spool: print from that
-    // slot rather than the one saved on the G-code, which was chosen for another printer.
-    const matchedSlot = printerFilaments.findSlot(filamentSet, candidate.required_material, candidate.required_color);
+    // An Auto printer matched this part through one particular spool: print from that slot
+    // rather than the one saved on the G-code, which was chosen for another printer. Only
+    // spools feeding the nozzle the file prints with count (an H2D's AMS feeds one nozzle,
+    // each external holder its own side).
+    const fileNozzle = nozzleCompat.fileNozzleFor(printer, candidate.filepath);
+    const matchedSlot = printerFilaments.findSlot(filamentSet, candidate.required_material, candidate.required_color, fileNozzle);
     if (printerFilaments.isAuto(printerRow) && matchedSlot != null && matchedSlot !== candidate.ams_slot) {
-      console.log(`[scheduler] ${printer.name} (Auto filament): printing from AMS slot ${matchedSlot + 1}, the spool that matched ${[candidate.required_material, candidate.required_color].filter(Boolean).join(' / ')}`);
+      const where = matchedSlot === 255 ? 'the right external spool' : matchedSlot === 254 ? 'the left external spool' : `AMS slot ${matchedSlot + 1}`;
+      console.log(`[scheduler] ${printer.name} (Auto filament): printing from ${where}, the spool that matched ${[candidate.required_material, candidate.required_color].filter(Boolean).join(' / ')}`);
       candidate.ams_slot = matchedSlot;
     }
 

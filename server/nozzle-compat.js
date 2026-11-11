@@ -29,4 +29,19 @@ function nozzleMismatchFor(printer, storedFilepath) {
   }
 }
 
-module.exports = { nozzleMismatchFor, gcodeFullPath };
+// The physical nozzle the file prints with (0 right, 1 left), or null when the driver cannot
+// tell (non-Bambu printers, or a file that does not say).
+function fileNozzleFor(printer, storedFilepath) {
+  if (!storedFilepath) return null;
+  let driver;
+  try { driver = getDriver(printer.type); } catch (_) { return null; }
+  if (typeof driver.fileNozzle !== 'function') return null;
+  try {
+    const n = driver.fileNozzle(gcodeFullPath(storedFilepath));
+    return Number.isInteger(n) ? n : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+module.exports = { nozzleMismatchFor, fileNozzleFor, gcodeFullPath };

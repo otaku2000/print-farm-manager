@@ -82,12 +82,19 @@ function printerFilaments(db, printer) {
 
   const library = loadLibrary(db);
   const out = [];
-  for (const tray of loaded.trays) {
+  // AMS trays first, then external spools (slot 255 right, 254 left), so a match prefers the
+  // AMS. nozzle is the nozzle the spool feeds (0 right, 1 left, null unknown); findSlot uses it
+  // to keep the choice on the nozzle the file prints with.
+  const spools = [
+    ...loaded.trays.map(t => ({ ...t, slot: t.slot })),
+    ...(loaded.externals || []).map(e => ({ ...e, slot: e.id })),
+  ];
+  for (const tray of spools) {
     if (!tray.type) continue;
     const names = [...new Set([tray.name, tray.type].filter(Boolean))];
     for (const name of names) {
       const material = canonicalMaterial(library, name);
-      out.push({ material: material.name, color: nearestColor(library, material.id, tray.color), slot: tray.slot });
+      out.push({ material: material.name, color: nearestColor(library, material.id, tray.color), slot: tray.slot, nozzle: tray.nozzle ?? null });
     }
   }
   return out;
@@ -106,11 +113,14 @@ function matchesRequirement(filaments, requiredMaterial, requiredColor) {
     (!requiredColor || f.color === requiredColor));
 }
 
-// The AMS slot holding a spool that meets the requirement, or null (manual printers, no
-// requirement, or no match).
-function findSlot(filaments, requiredMaterial, requiredColor) {
+// The slot holding a spool that meets the requirement (an AMS compound id, or 255/254 for the
+// right/left external spool), or null (manual printers, no requirement, or no match). With
+// `nozzle` (0 right, 1 left), only spools feeding that nozzle count; a spool whose nozzle is
+// unknown always counts.
+function findSlot(filaments, requiredMaterial, requiredColor, nozzle = null) {
   if (!requiredMaterial && !requiredColor) return null;
   const hit = filaments.find(f => f.slot != null &&
+    (nozzle == null || f.nozzle == null || f.nozzle === nozzle) &&
     (!requiredMaterial || f.material === requiredMaterial) &&
     (!requiredColor || f.color === requiredColor));
   return hit ? hit.slot : null;

@@ -90,6 +90,14 @@ A fixed slot is a starting point, not a guarantee. Before uploading, the driver 
 
 Without a correct mapping the printer pauses right after the print starts with HMS 0700_8012, "Failed to get AMS mapping table".
 
+**Two-nozzle printers (H2D).** Each AMS unit feeds one nozzle, and each nozzle has its own external spool holder. The driver reads both from the printer's report, following Bambu Studio (`src/slic3r/GUI/DeviceCore/DevFilaSystem.cpp`, `DevDefs.h`, `DevMapping.cpp`, `SelectMachine.cpp`):
+
+- An AMS unit's `info` is a hex string whose bits 8 to 11 name the nozzle it feeds: `0` right, `1` left, `0xE` not bound to one.
+- External holders arrive in `vir_slot`: id `255` feeds the right nozzle and `254` the left. Older printers send a single `vt_tray`, treated as the right holder.
+- The nozzle a file prints with comes from the sliced file (the same reading as the nozzle size check above): physical nozzle `0` right, `1` left.
+
+When the file's nozzle is known, the tray choice only considers trays on that nozzle. Match from AMS (and a fixed slot that has to move) prefers an AMS tray on that nozzle, then that nozzle's external spool, and throws `AMS_NO_MATCH` naming the nozzle when neither has the type. A fixed tray whose AMS feeds the other nozzle is moved the same way as a tray holding the wrong type. An `ams_slot` of `-1` means the external spool on the file's nozzle; `255` or `254` names a holder, and a holder on the other side throws `AMS_WRONG_NOZZLE`. An external spool whose reported type differs from the file's throws `AMS_NO_MATCH`. On a printer that reports both holders, an external spool is sent as `-1` in `ams_mapping` and `{ ams_id: 255 or 254, slot_id: 0 }` in `ams_mapping2` with `use_ams` false, as Bambu Studio sends it; a printer with one holder keeps the empty external-spool payload it always had. The Auto filament scheduler applies the same nozzle filter when it picks the spool it sends (`findSlot` in `server/printer-filaments.js`). Every AMS on the farm reports `info` 10001003 (right nozzle). Implemented from Bambu Studio source and live reports; an H2D print from the left external spool has not yet been validated on hardware.
+
 ### Bambu nozzle size
 
 Each Bambu printer reports its installed nozzles in the MQTT report as `device.nozzle.info`, a list of `{ id, diameter, type }` (a single-nozzle printer also sends top-level `nozzle_diameter`). On an H2D, id `0` is the right nozzle and id `1` the left: Bambu Studio's `MAIN_EXTRUDER_ID` / `DEPUTY_EXTRUDER_ID` in `src/slic3r/GUI/DeviceCore/DevDefs.h`, displayed as "R" and "L" in `DevMappingNozzle.cpp`.
