@@ -598,6 +598,27 @@ describe('uploadAndPrint: AMS mapping from the sliced file', () => {
     expect(p.ams_mapping2).toEqual([{ ams_id: 255, slot_id: 255 }, { ams_id: 0, slot_id: 1 }]);
   });
 
+  test('refuses a file sliced for another nozzle size before uploading', async () => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'bambu-')), '1234_big.gcode.3mf');
+    fs.writeFileSync(file, buildZip({
+      'Metadata/slice_info.config':
+        '<config><plate><metadata key="index" value="1"/>' +
+        '<filament id="1" type="PETG" color="#000000"/>' +
+        '<nozzle id="0" extruder_id="1" nozzle_diameter="0.6" volume_type="Standard"/></plate></config>',
+      'Metadata/project_settings.config': JSON.stringify({ filament_type: ['PETG'], physical_extruder_map: ['0'] }),
+    }));
+    const printer = nextPrinter();
+    pushStatus(printer, { gcode_state: 'IDLE', ...h2s004Ams, device: { nozzle: { info: [{ id: 0, diameter: 0.4, type: 'HS01' }] } } });
+    mockPublish.mockClear();
+
+    await expect(bambu.uploadAndPrint(printer, file, 'big.gcode.3mf', { amsSlot: -2 }))
+      .rejects.toMatchObject({ code: 'NOZZLE_MISMATCH', message: expect.stringMatching(/0\.6 mm nozzle but the nozzle is 0\.4 mm/) });
+    expect(mockFtpClient.uploadFrom).not.toHaveBeenCalled();
+    expect(findPayload('project_file')).toBeNull();
+    expect(bambu.nozzleMismatch(printer, file)).toMatch(/0\.6 mm/);
+    expect(bambu.getNozzles(printer)).toEqual([{ id: 0, diameter: 0.4, type: 'HS01' }]);
+  });
+
   test('refuses before uploading when no AMS report arrives', async () => {
     const printer = nextPrinter();
     bambu.getStatus(printer);

@@ -35,6 +35,7 @@
 
 const { candidateSql, PROJECTION_COLUMNS } = require('./candidate-query');
 const { filamentsParam } = require('./printer-filaments');
+const { nozzleMismatchFor } = require('./nozzle-compat');
 const { fingerprint } = require('./schedule-state');
 
 // Block length used when neither the G-code nor the part carries an estimate. Blocks that
@@ -277,6 +278,7 @@ function projectSchedule(db, options = {}) {
         model: printer.model,
         group_name: printer.group_name,
         filaments: filamentsParam(db, printer),
+        printer,
         availableAt,
         seq: 0,
       });
@@ -306,6 +308,13 @@ function projectSchedule(db, options = {}) {
         lane.model, lane.group_name, lane.filaments, ...skip
       );
       if (!row) return null;
+
+      // Same nozzle-size skip as dispatch (server/nozzle-compat.js): this printer only, so
+      // the part stays plannable for printers that do have the right nozzle.
+      if (nozzleMismatchFor(lane.printer, row.filepath)) {
+        skip.push(row.part_id);
+        continue;
+      }
 
       const committed = plannedQty.get(row.part_id) || 0;
       const remaining = row.target_qty - row.completed_qty - committed;

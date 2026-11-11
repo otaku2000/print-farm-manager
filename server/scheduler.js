@@ -4,6 +4,7 @@ const path = require('path');
 const { getDriver } = require('./drivers');
 const { candidateSql, SCHEDULER_COLUMNS } = require('./candidate-query');
 const printerFilaments = require('./printer-filaments');
+const nozzleCompat = require('./nozzle-compat');
 const notifications = require('./notifications');
 const events = require('./events');
 const partLedger = require('./partLedger');
@@ -415,6 +416,17 @@ class JobScheduler extends EventEmitter {
           `G-code file missing for "${candidate.filename}" — re-upload the file for part "${part?.name}" in project "${part?.project_name}".`
         );
         console.warn(`[scheduler] G-code missing for part ${candidate.part_id} ("${candidate.filename}") — skipping to next part for ${printer.name}`);
+        skippedPartIds.push(candidate.part_id);
+        continue;
+      }
+
+      // The file was sliced for a different nozzle size than this printer has installed
+      // (server/nozzle-compat.js): skip this part for this printer, like a missing file,
+      // so it falls through to a part it can print. Another printer can still take it.
+      const nozzleProblem = nozzleCompat.nozzleMismatchFor(printer, candidate.filepath);
+      if (nozzleProblem) {
+        this.db.prepare('DELETE FROM jobs WHERE id = ?').run(jobId);
+        console.log(`[scheduler] ${printer.name} skipped for "${candidate.filename}": ${nozzleProblem}`);
         skippedPartIds.push(candidate.part_id);
         continue;
       }

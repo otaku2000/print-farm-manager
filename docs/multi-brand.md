@@ -88,7 +88,17 @@ A G-code's `ams_slot` is one of three filament sources: `-1` the external spool,
 
 A fixed slot is a starting point, not a guarantee. Before uploading, the driver checks the printer's live AMS report. A dispatch right after recommission runs on a new MQTT connection, so the driver waits up to 20 s for the first report and throws `AMS_UNKNOWN` if none arrives. The configured tray is used only when the report shows the plate's filament type in it. An empty tray, or one missing from the report, does not count. Otherwise the driver picks a tray with that type, preferring the same color, and logs the change. If no tray has the type, `uploadAndPrint` throws `AMS_NO_MATCH`. Both errors happen before any transfer, and the scheduler's upload-failure path holds the printer. A plate that uses more than one filament throws `AMS_MULTI_FILAMENT`, because a G-code carries a single slot. A file with no slice info falls back to `[slot]`.
 
-Without a correct mapping the printer pauses right after the print starts with HMS 0700_8012, "Failed to get AMS mapping table". Hardware status: the new mapping is tested against mocks only and has not yet started a print on a real printer.
+Without a correct mapping the printer pauses right after the print starts with HMS 0700_8012, "Failed to get AMS mapping table".
+
+### Bambu nozzle size
+
+Each Bambu printer reports its installed nozzles in the MQTT report as `device.nozzle.info`, a list of `{ id, diameter, type }` (a single-nozzle printer also sends top-level `nozzle_diameter`). On an H2D, id `0` is the right nozzle and id `1` the left: Bambu Studio's `MAIN_EXTRUDER_ID` / `DEPUTY_EXTRUDER_ID` in `src/slic3r/GUI/DeviceCore/DevDefs.h`, displayed as "R" and "L" in `DevMappingNozzle.cpp`.
+
+A sliced file lists the nozzles plate 1 prints with in `Metadata/slice_info.config` as `<nozzle extruder_id="2" nozzle_diameter="0.4">`, where `extruder_id` is the 1-based logical extruder (1 left, 2 right), and `Metadata/project_settings.config` carries `physical_extruder_map` from logical to physical. The farm's H2D files print on logical 2, physical 0: the right nozzle.
+
+`server/drivers/bambu-nozzles.js` reads both sides and compares diameters (0.4 equals 0.40). The scheduler skips a printer whose matching nozzle is a different size, the same way it skips a part whose file is missing: the printer falls through to a part it can print and another printer can take this one (`server/nozzle-compat.js`, also used by the schedule projection and the dispatch-status and queue diagnostics, which show the printer as `wrong_nozzle` with the reason). The driver checks again before uploading and throws `NOZZLE_MISMATCH`. When either the file or the printer does not say, nothing is skipped; the driver logs that the size was not checked.
+
+The Printers list shows a Nozzle chip (for example `R 0.4 mm · L 0.6 mm`) and the Printer Detail card lists each nozzle's size and type. Hardware status: the nozzle fields were read from a live H2S (one 0.4 mm nozzle) and H2D (right 0.4 mm, left 0.6 mm); the dispatch skip is tested against mocks only. Hardware status: the new mapping is tested against mocks only and has not yet started a print on a real printer.
 
 ---
 

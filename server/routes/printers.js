@@ -126,12 +126,12 @@ module.exports = (db, scheduler = null) => {
   // keyed by printer id. A printer that has not reported its AMS yet is left out.
   // Read from the driver's cached MQTT report, so it never contacts a printer.
   router.get('/loaded-filament', (req, res) => {
-    const { getLoadedFilament } = require('../drivers/bambu');
+    const { getLoadedFilament, getNozzles } = require('../drivers/bambu');
     const printers = db.prepare("SELECT * FROM printers WHERE type = 'bambu' AND is_active = 1").all();
     const out = {};
     for (const printer of printers) {
       const filament = getLoadedFilament(printer);
-      if (filament) out[printer.id] = filament;
+      if (filament) out[printer.id] = { ...filament, nozzles: getNozzles(printer) };
     }
     res.json(out);
   });
@@ -141,10 +141,12 @@ module.exports = (db, scheduler = null) => {
   router.get('/:id/loaded-filament', (req, res) => {
     const printer = db.prepare('SELECT * FROM printers WHERE id = ?').get(req.params.id);
     if (!printer) return res.status(404).json({ error: 'Printer not found' });
-    const filament = printer.type === 'bambu' && printer.is_active
-      ? require('../drivers/bambu').getLoadedFilament(printer)
-      : null;
-    res.json({ filament });
+    const live = printer.type === 'bambu' && printer.is_active;
+    const bambu = live ? require('../drivers/bambu') : null;
+    res.json({
+      filament: live ? bambu.getLoadedFilament(printer) : null,
+      nozzles:  live ? bambu.getNozzles(printer) : null,
+    });
   });
 
   // GET /api/printers/decommissioned — list decommissioned printers

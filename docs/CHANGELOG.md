@@ -2,6 +2,22 @@
 
 ---
 
+## 2026-11-11: Nozzle size shown and checked before dispatch (Bambu)
+
+Bambu printers report each installed nozzle, and an H2D can carry two different sizes (one farm H2D has a 0.4 mm right nozzle and a 0.6 mm left one). Nothing compared a sliced file's nozzle with the printer's, so a 0.4 mm job could be sent to a 0.6 mm nozzle. The driver now reads the installed nozzles and, from the sliced file, which nozzle plate 1 prints with and at what size, mapping the file's logical extruder to the printer's physical nozzle the way Bambu Studio does (`physical_extruder_map`; physical 0 is the right nozzle). The scheduler skips a printer whose nozzle does not match, falling through to a part it can print, and the projection and dispatch diagnostics apply the same check through one helper. The driver re-checks before upload. The Printers list and Printer Detail card show the nozzles.
+
+Hardware status: nozzle fields read from a live H2S and H2D, and the left/right ids taken from Bambu Studio's source. The skip itself is tested against mocks only; no mismatched job has been tried on a printer.
+
+### Changes
+- `server/drivers/bambu-nozzles.js` (new): reads file and printer nozzles and compares them.
+- `server/drivers/bambu.js`: `getNozzles` and `nozzleMismatch`; `uploadAndPrint` throws `NOZZLE_MISMATCH` before uploading.
+- `server/nozzle-compat.js` (new): the one check used by the scheduler, projection, and diagnostics.
+- `server/scheduler.js`, `server/projection.js`, `server/routes/parts.js`, `server/candidate-query.js`: skip mismatched printers; diagnostics add `wrong_nozzle` and `nozzle_problem`; `PROJECTION_COLUMNS` adds `gcodes.filepath`.
+- `server/routes/printers.js`: loaded-filament endpoints include `nozzles`.
+- `client/src/components/LoadedFilament.jsx`, `client/src/pages/Projects.jsx`: Nozzle chip and card row; Wrong nozzle state in the dispatch diagnostic.
+- `server/tests/bambu-nozzles.test.js`, `server/tests/nozzle-dispatch.test.js` (new), `server/tests/bambu-driver.test.js`, `server/tests/printers-loaded-filament.test.js`.
+- `docs/multi-brand.md`, `docs/api.md`, `docs/web-app.md`: documented.
+
 ## 2026-11-10: Filament source on G-code upload: match from AMS by default
 
 The Bambu G-code upload form required an AMS slot, numbered from 0 ("Slot 3" meant the printer's slot 4), with the loadout of whichever printer of that model the server found first. That fixed slot then went to every printer of the model, which is how a PETG plate was sent to a PET-CF tray on an H2S loaded differently from its sibling. The slot picker is now a **Filament source** dropdown: "Match from AMS" (default), "External spool", or "Fixed: AMS slot N" numbered as on the printer screen.
