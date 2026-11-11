@@ -2,6 +2,31 @@
 
 ---
 
+## 2026-11-11: Printer model, material and color filled in from the sliced file
+
+A Bambu or Orca sliced .3mf records the printer it was sliced for ("Bambu Lab H2S") and which filament plate 1 prints with: the filament profile ("Bambu PETG HF @BBL H2S") and its color. Picking a file on the Quick Print page or in a part's G-code upload now reads that in the browser and selects the matching Printer model, Material and Color, with a note to check the filament. The printer model comes from the file even when the filename does not name it (the farm's file names such as `H2S_PETG_Bracket Coupler` were not recognized by the filename parser), and matches a farm model by label or id; an unknown printer leaves the field alone. The profile name gives "PETG HF" where the generic type would only say "PETG"; the color is the nearest library color with a hex for that material, by the same rule Auto filament uses. Only the two small metadata entries are read, so a large file is not loaded or uploaded twice. Anything that does not match the library is left for the operator.
+
+Checked against every sliced file on the farm with the live filament library and printer models: all nine get the right model (H2S or H2D, including `Camera Mount.gcode.3mf`, whose name has no model), and for filament eight resolve to PETG HF / Black or ABS-GF / Black as printed; H2S Servo Mount was sliced with a light blue-grey filament and resolves to PETG HF / White, which is why the values stay editable.
+
+### Changes
+- `client/src/sliceFilament.js` (new): reads the printer and plate 1's filament from a .3mf with `Blob.slice` and `DecompressionStream`, and maps them onto the farm's models and filament library.
+- `client/src/pages/QuickPrint.jsx`, `client/src/pages/Projects.jsx`: fill Printer model, Material and Color when a file is picked; Projects leaves a filament value equal to the project default blank so it keeps inheriting.
+- `docs/web-app.md`: documented.
+
+## 2026-11-11: Quick Print for one-off jobs
+
+Sending a single file to the farm meant creating a project, adding a part, uploading the G-code, and activating the project. The new Quick Print page does it in one form: choose the sliced file, model, copies, and optionally filament, and the next free printer of that model takes it.
+
+A quick print is an ordinary part in a built-in "Quick prints" project, so it keeps every rule project work has: filament and nozzle checks, AMS slot choice, holds and Set Ready sign-off, part counts and the ledger, job history, and the schedule. The project is created on first use at priority -1, and every existing ordering (dispatch, queue, schedule, dashboard, projects list) sorts lowest first, so quick prints go ahead of project work without changing the candidate query. Reordering projects leaves it at the top. Its id lives in a setting, so there is no schema change. No printer is pinned: any matching printer picks a quick print up as usual.
+
+### Changes
+- `server/quick-prints.js` (new): finds or creates the Quick prints project.
+- `server/routes/quick-prints.js` (new): `GET /api/quick-prints` and `POST /api/quick-prints/parts`; mounted in `server/index.js`.
+- `server/routes/projects.js`: `PUT /reorder` keeps the Quick prints project at priority -1.
+- `client/src/pages/QuickPrint.jsx` (new), `client/src/App.jsx`: Quick Print page under Projects.
+- `server/tests/quick-prints.test.js` (new): project creation and reuse, validation, reopening, recreation, listing, reorder, and dispatch order.
+- `docs/api.md`, `docs/web-app.md`: documented.
+
 ## 2026-11-11: Nozzle size shown and checked before dispatch (Bambu)
 
 Bambu printers report each installed nozzle, and an H2D can carry two different sizes (one farm H2D has a 0.4 mm right nozzle and a 0.6 mm left one). Nothing compared a sliced file's nozzle with the printer's, so a 0.4 mm job could be sent to a 0.6 mm nozzle. The driver now reads the installed nozzles and, from the sliced file, which nozzle plate 1 prints with and at what size, mapping the file's logical extruder to the printer's physical nozzle the way Bambu Studio does (`physical_extruder_map`; physical 0 is the right nozzle). The scheduler skips a printer whose nozzle does not match, falling through to a part it can print, and the projection and dispatch diagnostics apply the same check through one helper. The driver re-checks before upload. The Printers list and Printer Detail card show the nozzles.

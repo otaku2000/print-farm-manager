@@ -5,6 +5,7 @@ import { useToast } from '../useToast';
 import EmptyState from '../components/EmptyState';
 import { useConfirm } from '../useConfirm';
 import { signalScheduleDirty } from '../scheduleDirty';
+import { readSlicedFilament, suggestFromLibrary, modelFromPrinter } from '../sliceFilament';
 
 // ── Estimate helpers ──────────────────────────────────────────────────────────
 
@@ -247,6 +248,7 @@ function GcodeUploadPanel({ part, onUploaded, filamentTypes, filamentColors, pro
   const [selectedGroups, setSelectedGroups]   = useState([]);  // [] = all groups (or inherits project)
   const [requiredMaterial, setRequiredMaterial] = useState('');
   const [requiredColor, setRequiredColor]       = useState('');
+  const [fileFilamentNote, setFileFilamentNote] = useState(null);
 
   useEffect(() => {
     fetch('/api/models').then(r => r.json()).then(setModelOptions).catch(() => {});
@@ -287,6 +289,21 @@ function GcodeUploadPanel({ part, onUploaded, filamentTypes, filamentColors, pro
       }
       if (data.material_grams != null) setParsedMaterialGrams(data.material_grams);
     } catch (_) {}
+
+    // Suggest the printer model, Material and Color from the sliced file
+    // (client/src/sliceFilament.js). The file's printer beats a guess from the filename. A
+    // filament value that equals the project's default is left blank so the G-code keeps
+    // inheriting it.
+    const fromFile = await readSlicedFilament(f);
+    const fileModel = modelFromPrinter(fromFile?.printer, modelOptions);
+    if (fileModel) setModel(fileModel);
+    const suggested = suggestFromLibrary(fromFile, filamentTypes, filamentColors);
+    setFileFilamentNote(suggested.material ? [suggested.material, suggested.color].filter(Boolean).join(' / ') : null);
+    if (suggested.material) {
+      const sameAsProject = suggested.material === projectMaterial && (!suggested.color || suggested.color === projectColor);
+      setRequiredMaterial(sameAsProject ? '' : suggested.material);
+      setRequiredColor(sameAsProject ? '' : (suggested.color || ''));
+    }
   }
 
   function toggleGroup(g) {
@@ -340,7 +357,7 @@ function GcodeUploadPanel({ part, onUploaded, filamentTypes, filamentColors, pro
       } else {
         setFile(null); setPPP(''); setModel(''); setAmsSlot(AMS_MATCH); setAmsSlots([]);
         setParsedEstPrintSecs(null); setParsedMaterialGrams(null);
-        setSelectedGroups([]); setRequiredMaterial(''); setRequiredColor('');
+        setSelectedGroups([]); setRequiredMaterial(''); setRequiredColor(''); setFileFilamentNote(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
         onUploaded();
       }
@@ -475,6 +492,11 @@ function GcodeUploadPanel({ part, onUploaded, filamentTypes, filamentColors, pro
             </select>
           );
         })()}
+        {fileFilamentNote && (
+          <span style={{ fontSize: 11, color: '#64748b' }}>
+            File says {fileFilamentNote}: check it matches the spool you will print with
+          </span>
+        )}
         {groups.length > 0 && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             <span style={{ fontSize: 11, color: '#475569' }}>Groups:</span>

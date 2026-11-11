@@ -850,6 +850,39 @@ Returns `400` for unknown keys or failed validation.
 
 ---
 
+## Quick prints
+
+One-off prints without setting up a project (`server/quick-prints.js`). Each is an ordinary part in a built-in project named "Quick prints", created on first use at priority `-1` and recorded in the `quick_print_project_id` setting. Projects dispatch lowest priority number first and reordering numbers them from `0`, so quick prints go ahead of all project work, in the order they were added. `PUT /api/projects/reorder` leaves that project at `-1` wherever it appears in `ids`. Everything else is the normal pipeline: filament and nozzle checks, AMS slot choice, holds and Set Ready, part counts, and the schedule.
+
+The Quick Print page adds one with two calls: `POST /api/quick-prints/parts`, then the file through `POST /api/gcodes/upload` with the returned part id (which also triggers the dispatch sweep). If the upload fails it deletes the part with `DELETE /api/parts/:id`.
+
+### `GET /api/quick-prints`
+
+The project and its 100 most recent parts, newest first, each with its first G-code and any job currently uploading or printing. Always `200`; `{ "project": null, "parts": [] }` before the first quick print (nothing is created).
+
+```json
+{
+  "project": { "id": 9, "name": "Quick prints", "status": "active" },
+  "parts": [
+    {
+      "id": 41, "name": "Replacement bracket", "target_qty": 2, "completed_qty": 0, "status": "open", "created_at": 1794400000000,
+      "gcode": { "id": 77, "filename": "bracket.gcode.3mf", "printer_model": "h2s", "parts_per_plate": 1, "est_print_secs": 2958 },
+      "active_jobs": [{ "id": 220, "status": "printing", "parts_per_plate": 1, "started_at": 1794400100000, "printer_id": 5, "printer_name": "BL-H2S-004" }]
+    }
+  ]
+}
+```
+
+### `POST /api/quick-prints/parts`
+
+Creates a quick print's part, creating the project first if needed and reopening it if it had completed (a paused or draft project stays as it is).
+
+Body: `{ "name": "Replacement bracket", "copies": 2, "parts_per_plate": 1 }`. Required: `name` (trimmed, up to 200 characters) and `copies` (plates, whole number 1 to 1000). Optional: `parts_per_plate` (whole number 1 to 1000, default 1). The part's `target_qty` is `copies * parts_per_plate`.
+
+Returns `201` with `{ "project_id": 9, "part": { ... } }`. `400` naming every invalid field, with nothing created.
+
+---
+
 ## Maintenance
 
 Preventive maintenance warnings. A printer is overdue when it reaches either limit (days or print hours) since its latest logged service, or since it was added if none is logged. Print hours are the summed `started_at` to `finished_at` time of jobs that ran on the printer. Warnings only: nothing here affects dispatch. Farm-wide defaults are the `maintenance_interval_days` and `maintenance_interval_hours` settings; a printer can override either.

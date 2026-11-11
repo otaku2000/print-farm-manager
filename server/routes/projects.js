@@ -2,6 +2,7 @@ const express = require('express');
 const path    = require('path');
 const fs      = require('fs');
 const partLedger = require('../partLedger');
+const quickPrints = require('../quick-prints');
 const router  = express.Router();
 
 const GCODE_DIR = path.join(__dirname, '..', 'gcode');
@@ -42,9 +43,14 @@ module.exports = (db, scheduler = null) => {
     }
     const update = db.prepare('UPDATE projects SET priority = ?, updated_at = ? WHERE id = ?');
     const now = Date.now();
+    // The built-in quick-print project keeps its fixed top priority (server/quick-prints.js)
+    // wherever it lands in the dragged list; the others are numbered from 0 around it.
+    const quickId = quickPrints.quickProjectId(db);
+    const ordered = ids.filter(id => Number(id) !== quickId);
     db.transaction(() => {
-      ids.forEach((id, index) => update.run(index, now, id));
+      ordered.forEach((id, index) => update.run(index, now, id));
     })();
+
     res.json({ success: true });
   });
 
