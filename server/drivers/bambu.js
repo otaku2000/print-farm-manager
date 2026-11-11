@@ -320,7 +320,12 @@ function getLoadedFilament(printer) {
     color: t.type ? t.color : null,
     remain: t.type && Number.isInteger(t.remain) && t.remain >= 0 && t.remain <= 100 ? t.remain : null,
   });
-  const externals = all.filter(t => t.external).map(t => ({ id: t.tray, nozzle: t.nozzle, ...view(t) }));
+  // An external holder reports remain 0 when it cannot measure the spool (seen on every loaded
+  // holder on the farm), so 0 there means unknown, not empty.
+  const externals = all.filter(t => t.external).map(t => {
+    const v = view(t);
+    return { id: t.tray, nozzle: t.nozzle, ...v, remain: v.remain ? v.remain : null };
+  });
   const firstLoaded = externals.find(e => e.type);
 
   return {
