@@ -320,7 +320,12 @@ function getLoadedFilament(printer) {
     color: t.type ? t.color : null,
     remain: t.type && Number.isInteger(t.remain) && t.remain >= 0 && t.remain <= 100 ? t.remain : null,
   });
-  const externals = all.filter(t => t.external).map(t => ({ id: t.tray, nozzle: t.nozzle, ...view(t) }));
+  // An external holder reports remain 0 when it cannot measure the spool (seen on every loaded
+  // holder on the farm), so 0 there means unknown, not empty.
+  const externals = all.filter(t => t.external).map(t => {
+    const v = view(t);
+    return { id: t.tray, nozzle: t.nozzle, ...v, remain: v.remain ? v.remain : null };
+  });
   const firstLoaded = externals.find(e => e.type);
 
   return {
@@ -593,4 +598,32 @@ async function checkIfPrinting(printer) {
   return status === 'PRINTING' || status === 'PAUSED';
 }
 
-module.exports = { getStatus, uploadAndPrint, cancelJob, checkIfPrinting, getAmsSlots, getLoadedFilament, getNozzles, nozzleMismatch, fileNozzle, deleteFile, dropConnection, openDataConnection };
+// The serial number of the Bambu printer at this IP, read from the TLS certificate its MQTT
+// broker presents on port 8883: the certificate's subject CN is the printer's serial (issued
+// by Bambu's own CA). Checked on the farm's H2D and H2S printers, where the CN matched the
+// serial each printer was added with. No access code is needed, because only the TLS
+// handshake runs; nothing is sent. Resolves to the serial, or null when the IP does not
+// answer as a Bambu printer within timeoutMs.
+const SERIAL_LOOKUP_TIMEOUT_MS = 5000;
+
+function lookupSerial(ip, timeoutMs = SERIAL_LOOKUP_TIMEOUT_MS) {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(value);
+    };
+    const socket = tls.connect({ host: ip, port: 8883, rejectUnauthorized: false }, () => {
+      const cert = socket.getPeerCertificate();
+      const cn = cert && cert.subject && cert.subject.CN;
+      const issuer = (cert && cert.issuer && (cert.issuer.O || cert.issuer.CN)) || '';
+      finish(typeof cn === 'string' && /^[0-9A-Z]{8,20}$/.test(cn) && /BBL/i.test(issuer) ? cn : null);
+    });
+    socket.on('error', () => finish(null));
+    const timer = setTimeout(() => finish(null), timeoutMs);
+  });
+}
+module.exports = { getStatus, uploadAndPrint, cancelJob, checkIfPrinting, getAmsSlots, getLoadedFilament, getNozzles, lookupSerial, nozzleMismatch, fileNozzle, deleteFile, dropConnection, openDataConnection };

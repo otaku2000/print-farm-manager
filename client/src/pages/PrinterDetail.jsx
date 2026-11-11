@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useModelLabel } from '../useModelLabel';
 import { useParams, useNavigate } from 'react-router-dom';
 import { LoadedFilamentPanel } from '../components/LoadedFilament';
+import ComboBox from '../components/ComboBox';
 
 // Loaded Material select value meaning "match against the AMS" (filament_auto = 1).
 const AUTO_FILAMENT = '__auto__';
@@ -377,17 +378,14 @@ export default function PrinterDetail() {
               )}
               <label style={detailLabelStyle}>
                 Group
-                <input
+                <ComboBox
                   value={detailsDraft.group_name}
-                  onChange={e => setDetailsDraft(d => ({ ...d, group_name: e.target.value }))}
+                  onChange={v => setDetailsDraft(d => ({ ...d, group_name: v }))}
+                  options={groups}
                   disabled={savingDetails}
                   placeholder="optional"
-                  list="printer-detail-group-options"
-                  style={detailInputStyle}
+                  inputStyle={detailInputStyle}
                 />
-                <datalist id="printer-detail-group-options">
-                  {groups.map(g => <option key={g} value={g} />)}
-                </datalist>
               </label>
               <label style={detailLabelStyle}>
                 Serial Number
@@ -428,12 +426,14 @@ export default function PrinterDetail() {
               <label style={detailLabelStyle}>
                 Loaded Color
                 <select
-                  value={detailsDraft.loaded_material === AUTO_FILAMENT ? '' : detailsDraft.loaded_color}
+                  value={detailsDraft.loaded_material === AUTO_FILAMENT ? AUTO_FILAMENT : detailsDraft.loaded_color}
                   onChange={e => setDetailsDraft(d => ({ ...d, loaded_color: e.target.value }))}
                   disabled={savingDetails || !detailsDraft.loaded_material || detailsDraft.loaded_material === AUTO_FILAMENT}
                   style={{ ...detailInputStyle, cursor: detailsDraft.loaded_material && detailsDraft.loaded_material !== AUTO_FILAMENT ? 'pointer' : 'not-allowed' }}
                 >
-                  <option value="">— none —</option>
+                  {detailsDraft.loaded_material === AUTO_FILAMENT
+                    ? <option value={AUTO_FILAMENT}>Auto (from AMS)</option>
+                    : <option value="">— none —</option>}
                   {filamentColors
                     .filter(c => c.type_name === detailsDraft.loaded_material)
                     .map(c => <option key={c.id} value={c.name}>{c.name}</option>)}

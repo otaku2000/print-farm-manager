@@ -101,6 +101,16 @@ const server = app.listen(PORT, () => {
   app.use('/api/gcodes',   require('./routes/gcodes')(db, scheduler));
 
   scheduler.start();
+  // Reminders for AMS slots that ran empty (server/empty-slots.js).
+  const emptySlots = require('./empty-slots');
+  poller.on('pollComplete', () => {
+    try {
+      emptySlots.check(db, require('./drivers/bambu').getLoadedFilament);
+    } catch (err) {
+      console.error('[empty-slots] check failed:', err.message);
+    }
+  });
+
   poller.start();
   backup.start(db);
 

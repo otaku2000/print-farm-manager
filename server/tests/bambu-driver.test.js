@@ -537,7 +537,7 @@ describe('getLoadedFilament', () => {
     pushStatus(printer, {
       vir_slot: [
         { id: '255', tray_type: '', tray_color: '' },
-        { id: '254', tray_type: 'TPU', tray_sub_brands: 'TPU 95A', tray_color: 'FF0000FF', remain: -1 },
+        { id: '254', tray_type: 'TPU', tray_sub_brands: 'TPU 95A', tray_color: 'FF0000FF', remain: 0 },
       ],
       ams: { tray_now: '255', ams: [{ id: '0', info: '10001003', tray: [{ id: '0', tray_type: 'PLA', tray_color: 'FFFFFFFF' }] }] },
     });

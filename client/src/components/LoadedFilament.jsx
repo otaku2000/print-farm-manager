@@ -52,7 +52,8 @@ function nozzleSide(id, count) {
 }
 
 // External spool holders: 255 feeds the right nozzle, 254 the left (Bambu Studio's
-// VIRTUAL_TRAY_MAIN_ID / DEPUTY_ID). A printer with one holder reports only 255.
+// VIRTUAL_TRAY_MAIN_ID / DEPUTY_ID). A printer with one holder reports only 255. Only holders
+// with a spool loaded are shown; an H2D still labels them by side (R-Ext, L-Ext).
 function externalsOf(filament) {
   if (Array.isArray(filament.externals)) return filament.externals;
   return filament.external ? [{ id: 255, nozzle: null, ...filament.external, name: filament.external.type, remain: null }] : [];
@@ -108,7 +109,7 @@ export function LoadedFilamentChips({ filament }) {
       {filament.trays.map(t => (
         <FilamentChip key={t.slot} label={`${t.slot + 1}${traySide(t, twoNozzles)}`} tray={t} active={t.slot === filament.active_slot} />
       ))}
-      {exts.filter(e => e.type || exts.length > 1).map(e => (
+      {exts.filter(e => e.type).map(e => (
         <FilamentChip key={e.id} label={extLabel(e, exts, true)} tray={e} active={!!e.type && filament.active_slot === -1} />
       ))}
     </div>
@@ -199,7 +200,7 @@ export function LoadedFilamentPanel({ printerId }) {
             const side = traySide(t, twoNozzles);
             return <TrayTile key={t.slot} label={t.slot + 1} side={side === 'L' ? 'Left' : side === 'R' ? 'Right' : ''} tray={t} active={t.slot === filament.active_slot} />;
           })}
-          {exts.filter(e => e.type || exts.length > 1).map(e => (
+          {exts.filter(e => e.type).map(e => (
             <TrayTile key={e.id} label={extLabel(e, exts, false)} tray={e} active={!!e.type && filament.active_slot === -1} />
           ))}
         </div>

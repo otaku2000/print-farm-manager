@@ -110,6 +110,31 @@ No parameters. Always `200`.
 
 The same live AMS contents for one printer, as `{ "filament": { ... }, "nozzles": [ ... ] }` in the shape above. `filament` is `null` for a non-Bambu or decommissioned printer, or one that has not reported its AMS yet. `404` if the printer does not exist. Used by the Printer Detail view.
 
+### `GET /api/printers/lookup-serial`
+
+Reads the serial number of the printer at an IP address from the printer itself. Bambu only: the serial is the subject CN of the TLS certificate the printer's MQTT port (8883) presents, issued by Bambu's CA. Only the TLS handshake runs, so no access code is needed. Used by Settings, Add Printer, to fill the Serial Number field.
+
+**Query:** `ip` (required, an IPv4 or IPv6 address), `type` (optional, default `bambu`; no other brand is supported).
+
+**Response** `200`:
+```json
+{ "serial": "0938AJ611400475" }
+```
+
+`400` for a missing or invalid `ip` or an unsupported `type`. `404` when nothing at that IP answers as a Bambu printer within 5 s.
+
+### `GET /api/printers/empty-slots`
+
+Open reminders for AMS slots that ran empty while the server was running (`server/empty-slots.js`), keyed by printer id. A reminder starts when a slot that held a spool reports none, and clears when a spool is loaded into it. The first report after a server start only records what is loaded, so slots that were already empty have no reminder. Always `200`; `{}` when nothing ran out. Used by the Fleet page's Load Spool tag.
+
+```json
+{ "12": [{ "slot": 1, "was": "PETG", "since": 1794420000000 }] }
+```
+
+- `slot`: `ams_id * 4 + slot_id` (0-based; shown plus 1).
+- `was`: the filament type the slot held.
+- `since`: when it was seen empty (epoch ms).
+
 ---
 
 ### `GET /api/printers/:id`

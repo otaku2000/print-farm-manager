@@ -149,6 +149,26 @@ module.exports = (db, scheduler = null) => {
     });
   });
 
+  // GET /api/printers/lookup-serial?ip=192.168.0.205&type=bambu: the serial number of the
+  // printer at that IP, read from the printer itself (Bambu only: the TLS certificate of its
+  // MQTT port, see drivers/bambu.js lookupSerial). 400 for a missing or invalid IP or a brand
+  // that cannot be looked up, 404 when nothing at that IP answers as a Bambu printer.
+  router.get('/lookup-serial', async (req, res) => {
+    const ip = String(req.query.ip || '').trim();
+    const type = String(req.query.type || 'bambu');
+    if (!require('net').isIP(ip)) return res.status(400).json({ error: 'ip must be an IPv4 or IPv6 address' });
+    if (type !== 'bambu') return res.status(400).json({ error: `Serial lookup is not supported for ${type} printers` });
+    const serial = await require('../drivers/bambu').lookupSerial(ip);
+    if (!serial) return res.status(404).json({ error: `No Bambu printer answered at ${ip}` });
+    res.json({ serial });
+  });
+
+  // GET /api/printers/empty-slots: open reminders for AMS slots that ran empty while the
+  // server was running (server/empty-slots.js), keyed by printer id.
+  router.get('/empty-slots', (req, res) => {
+    res.json(require('../empty-slots').list());
+  });
+
   // GET /api/printers/decommissioned — list decommissioned printers
   router.get('/decommissioned', (req, res) => {
     const printers = db.prepare('SELECT * FROM printers WHERE is_active = 0 ORDER BY decommissioned_at DESC').all();
