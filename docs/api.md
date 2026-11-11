@@ -85,10 +85,13 @@ No parameters. Always `200`.
 {
   "5": {
     "trays": [
-      { "slot": 0, "ams_id": 0, "slot_id": 0, "type": "ABS-GF", "name": "ABS-GF", "color": "000000", "remain": 34 },
-      { "slot": 1, "ams_id": 0, "slot_id": 1, "type": null, "name": null, "color": null, "remain": null },
-      { "slot": 2, "ams_id": 0, "slot_id": 2, "type": "PETG", "name": "PETG HF", "color": "0C3B95", "remain": 100 },
-      { "slot": 3, "ams_id": 0, "slot_id": 3, "type": "PET-CF", "name": "PET-CF", "color": "000000", "remain": null }
+      { "slot": 0, "ams_id": 0, "slot_id": 0, "nozzle": 0, "type": "ABS-GF", "name": "ABS-GF", "color": "000000", "remain": 34 },
+      { "slot": 1, "ams_id": 0, "slot_id": 1, "nozzle": 0, "type": null, "name": null, "color": null, "remain": null },
+      { "slot": 2, "ams_id": 0, "slot_id": 2, "nozzle": 0, "type": "PETG", "name": "PETG HF", "color": "0C3B95", "remain": 100 },
+      { "slot": 3, "ams_id": 0, "slot_id": 3, "nozzle": 0, "type": "PET-CF", "name": "PET-CF", "color": "000000", "remain": null }
+    ],
+    "externals": [
+      { "id": 255, "nozzle": 0, "type": null, "name": null, "color": null, "remain": null }
     ],
     "external": null,
     "active_slot": 0
@@ -97,7 +100,9 @@ No parameters. Always `200`.
 ```
 
 - `trays`: every tray including empty ones. `slot` is `ams_id * 4 + slot_id` (0-based; the printer screen shows it plus 1). `type` is the generic filament type (`tray_type`) and `name` the product (`tray_sub_brands`, such as "PETG HF", falling back to `type`); both are `null` when the tray is empty. `color` is `RRGGBB` or `null`. `remain` is the percent of filament left, or `null` when the printer does not know it: Bambu reports -1 for a spool without a Bambu RFID tag.
-- `external`: `{ "type", "color" }` when a spool is on the external holder, else `null`.
+- `trays[].nozzle`: the nozzle the tray's AMS feeds, `0` right or `1` left, or `null` when the printer does not bind it to one nozzle.
+- `externals`: every external spool holder the printer reports, loaded or not, as `[{ "id": 255, "nozzle": 0, "type", "name", "color", "remain" }]`. `255` is the right holder and `254` the left; a one-holder printer reports only `255`. Empty when none is reported.
+- `external`: `{ "type", "color" }` of the first loaded external holder, else `null` (kept for older callers).
 - `active_slot`: the tray feeding now, `-1` for the external spool, `null` for none.
 - `nozzles`: installed nozzles as `[{ "id": 0, "diameter": 0.4, "type": "HS01" }]`, or `null` when not reported. On a two-nozzle printer id `0` is the right nozzle and `1` the left (docs/multi-brand.md, Bambu nozzle size).
 

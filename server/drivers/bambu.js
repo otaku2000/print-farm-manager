@@ -296,38 +296,57 @@ function nozzleMismatch(printer, gcodeFullPath) {
 //                color is RRGGBB or null; remain is percent left (0 to 100), or null when
 //                the printer does not know. Read from live H2S/H2D reports: remain is
 //                -1 for a spool without a Bambu RFID tag.
-//   external     the external spool { type, color } when one is loaded, else null
+//                nozzle is the nozzle the tray's AMS feeds: 0 right, 1 left, null unknown
+//   externals    every external spool holder the printer reports, loaded or not:
+//                { id, nozzle, type, name, color, remain } with id 255 (right) or 254 (left)
+//   external     the first loaded external holder { type, color }, else null (kept for
+//                older callers)
 //   active_slot  tray currently feeding (tray_now): a slot, -1 for the external spool,
 //                null when none (OpenBambuAPI: 254 = external, 255 = none)
 function getLoadedFilament(printer) {
   const conn = connections.get(printer.id);
-  const trays = ams.liveTrays(conn?.latestPrint);
-  if (!trays) return null;
+  const all = ams.liveTrays(conn?.latestPrint);
+  if (!all) return null;
 
   const report = conn.latestPrint;
-  const vt = report.vt_tray;
   const trayNow = parseInt(report.ams?.tray_now, 10);
   let activeSlot = null;
   if (trayNow === 254) activeSlot = -1;
   else if (Number.isInteger(trayNow) && trayNow >= 0 && trayNow < 254) activeSlot = trayNow;
 
+  const view = t => ({
+    type: t.type || null,
+    name: t.type ? (t.subBrand || t.type) : null,
+    color: t.type ? t.color : null,
+    remain: t.type && Number.isInteger(t.remain) && t.remain >= 0 && t.remain <= 100 ? t.remain : null,
+  });
+  const externals = all.filter(t => t.external).map(t => ({ id: t.tray, nozzle: t.nozzle, ...view(t) }));
+  const firstLoaded = externals.find(e => e.type);
+
   return {
-    trays: trays.map(t => ({
-      slot: t.tray, ams_id: t.amsId, slot_id: t.slotId,
-      type: t.type || null,
-      name: t.type ? (t.subBrand || t.type) : null,
-      color: t.type ? t.color : null,
-      remain: t.type && Number.isInteger(t.remain) && t.remain >= 0 && t.remain <= 100 ? t.remain : null,
+    trays: all.filter(t => !t.external).map(t => ({
+      slot: t.tray, ams_id: t.amsId, slot_id: t.slotId, nozzle: t.nozzle, ...view(t),
     })),
-    external: vt?.tray_type ? { type: vt.tray_type, color: vt.tray_color ? String(vt.tray_color).slice(0, 6).toUpperCase() : null } : null,
+    externals,
+    external: firstLoaded ? { type: firstLoaded.type, color: firstLoaded.color } : null,
     active_slot: activeSlot,
   };
 }
 
+// The physical nozzle a sliced file prints with (0 right, 1 left), or null when the file does
+// not say or uses both. Cached per file (bambu-nozzles.js). Used to keep tray choice on the
+// nozzle that will print.
+function fileNozzle(gcodeFullPath) {
+  const required = nozzles.readPlateNozzles(gcodeFullPath);
+  const ids = required ? [...new Set(required.map(n => n.physicalId))] : [];
+  return ids.length === 1 ? ids[0] : null;
+}
+
 // Uploads the G-code file to the printer via FTPS, then triggers printing via MQTT.
 // gcodeFullPath must be a resolved absolute path that already exists on disk.
-// options.amsSlot: -1 or null = external spool, 0 to N = a fixed AMS tray (checked against
-// the sliced file's filament), -2 = match a tray from the AMS by that filament (bambu-ams.js)
+// options.amsSlot: -1 or null = the external spool on the file's nozzle, 255/254 = the right
+// or left external holder, 0 to N = a fixed AMS tray (checked against the sliced file's
+// filament and nozzle), -2 = match a tray on the file's nozzle by that filament (bambu-ams.js)
 async function uploadAndPrint(printer, gcodeFullPath, _filename, options = {}) {
   const { amsSlot = null } = options;
   if (!printer.serial_number) {
@@ -362,6 +381,9 @@ async function uploadAndPrint(printer, gcodeFullPath, _filename, options = {}) {
     amsSlot,
     plate,
     latestPrint: conn.latestPrint,
+    // Only trays on the nozzle the file prints with can feed it (an H2D's AMS is bound to
+    // one nozzle; each external holder feeds its own side).
+    nozzle: fileNozzle(gcodeFullPath),
   });
   if (mapping.note) console.log(`[bambu] ${printer.name}: ${mapping.note}`);
 
@@ -571,4 +593,4 @@ async function checkIfPrinting(printer) {
   return status === 'PRINTING' || status === 'PAUSED';
 }
 
-module.exports = { getStatus, uploadAndPrint, cancelJob, checkIfPrinting, getAmsSlots, getLoadedFilament, getNozzles, nozzleMismatch, deleteFile, dropConnection, openDataConnection };
+module.exports = { getStatus, uploadAndPrint, cancelJob, checkIfPrinting, getAmsSlots, getLoadedFilament, getNozzles, nozzleMismatch, fileNozzle, deleteFile, dropConnection, openDataConnection };

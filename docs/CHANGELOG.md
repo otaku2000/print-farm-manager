@@ -2,6 +2,20 @@
 
 ---
 
+## 2026-11-11: H2D trays matched to the nozzle the file prints with
+
+On an H2D each AMS feeds one nozzle and each nozzle has its own external spool holder, but the farm treated every tray as reachable and only knew one external spool. A file sliced for the left nozzle could be sent an AMS tray that feeds the right nozzle, and a spool on the left holder was invisible (the H2D reports its holders in `vir_slot`, which was not read; BL-H2D-001 has TPU on the left holder today). The driver now reads which nozzle each AMS feeds and both external holders, and only picks trays on the file's nozzle: the AMS on that nozzle first, then that nozzle's external spool, and a clear refusal when neither has the filament. Auto filament dispatch applies the same filter. On a printer with both holders, an external spool is now sent the way Bambu Studio sends it (`ams_mapping2` `{ 255 or 254, 0 }`); single-holder printers keep their current payload. Printer pages show both holders ("R-Ext", "L-Ext") and, on two-nozzle printers, which nozzle each AMS slot feeds. Implemented from Bambu Studio source and live reports; a left-nozzle print has not yet been validated on hardware.
+
+### Changes
+- `server/drivers/bambu-ams.js`: `liveTrays` reads the AMS `info` nozzle bits and `vir_slot` (or `vt_tray`); `chooseTray` and `buildAmsMapping` take the file's nozzle, filter trays by it, handle the `255`/`254` holders, and add `AMS_WRONG_NOZZLE`.
+- `server/drivers/bambu.js`: `getLoadedFilament` returns `nozzle` per tray and `externals`; new `fileNozzle`; `uploadAndPrint` passes the file's nozzle to the mapping.
+- `server/nozzle-compat.js`: `fileNozzleFor`.
+- `server/printer-filaments.js`: external holders join the Auto filament set with their nozzle; `findSlot` filters by nozzle.
+- `server/scheduler.js`: Auto filament slot choice uses the file's nozzle.
+- `client/src/components/LoadedFilament.jsx`: both external holders, and the nozzle each AMS slot feeds.
+- `server/tests/bambu-ams.test.js`, `bambu-driver.test.js`, `auto-filament.test.js`: H2D nozzle and external holder cases.
+- `docs/multi-brand.md`, `docs/api.md`: two-nozzle mapping and the `externals` field.
+
 ## 2026-11-11: Consistent letter casing in the UI
 
 Labels, buttons, and headings mixed Title Case ("Add Printer", "Loaded Material", "Sweep for Jobs") with lower case ("Recent quick prints", "Printer model", "Add task", "Expand all"), and printer models showed as lower-case ids ("h2d") on several pages while Fleet group headers used the label ("H2D"). Headings, section titles, buttons, form labels, column headers, chips, and fixed menu options now use Title Case (short words such as "of", "per", "to" stay lower case, as do qualifiers in brackets such as "(optional)"); sentences, hints, placeholders, and status messages stay in sentence case. Printer models now show the label from Settings > Printer Models everywhere ("H2D", "Prusa XL").

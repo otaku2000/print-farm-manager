@@ -2,7 +2,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { buildZip } = require('./helpers/build-zip');
-const { readPlateFilaments, buildAmsMapping, needsAmsReport } = require('../drivers/bambu-ams');
+const { readPlateFilaments, buildAmsMapping, needsAmsReport, liveTrays } = require('../drivers/bambu-ams');
 
 // slice_info.config and project_settings.config as Bambu Studio writes them (trimmed to the
 // fields read here; attribute layout copied from a real H2S export).
@@ -54,15 +54,17 @@ describe('buildAmsMapping', () => {
   const plate = (index, type = 'PETG', color = '000000', filamentCount = index + 1) =>
     ({ filamentCount, used: [{ index, type, color }] });
 
-  test('external spool or no slot: use_ams false, empty mapping', () => {
+  test('external spool or no slot on a one-holder printer: use_ams false, empty mapping', () => {
     expect(buildAmsMapping({ printerName: 'P', amsSlot: -1, plate: plate(0), latestPrint: H2S_004 }))
-      .toEqual({ useAms: false, amsMapping: [], amsMapping2: null, note: null });
+      .toEqual({ useAms: false, amsMapping: [], amsMapping2: null, note: 'printing from the right external spool (type not reported, not checked)', tray: -1 });
+    expect(buildAmsMapping({ printerName: 'P', amsSlot: -1, plate: null, latestPrint: H2S_004 }))
+      .toEqual({ useAms: false, amsMapping: [], amsMapping2: null, note: null, tray: -1 });
     expect(buildAmsMapping({ printerName: 'P', amsSlot: null, plate: plate(0), latestPrint: H2S_004 }).useAms).toBe(false);
   });
 
   test('no filament list in the file: sends the configured slot as before', () => {
     expect(buildAmsMapping({ printerName: 'P', amsSlot: 3, plate: null, latestPrint: H2S_004 }))
-      .toEqual({ useAms: true, amsMapping: [3], amsMapping2: null, note: null });
+      .toEqual({ useAms: true, amsMapping: [3], amsMapping2: null, note: null, tray: 3 });
   });
 
   test('regression: a plate printing filament 2 maps index 1 and marks filament 1 unused', () => {
@@ -78,6 +80,7 @@ describe('buildAmsMapping', () => {
     expect(r.amsMapping).toEqual([1]);
     expect(r.amsMapping2).toEqual([{ ams_id: 0, slot_id: 1 }]);
     expect(r.note).toMatch(/slot 4 holds PET-CF, using slot 2/);
+    expect(r.tray).toBe(1); // the tray actually used, reported back for spool tracking
   });
 
   test('prefers a tray whose color also matches', () => {
@@ -165,7 +168,8 @@ describe('buildAmsMapping', () => {
 
     test('needsAmsReport is true for match mode with a single-filament plate', () => {
       expect(needsAmsReport(-2, plate(0))).toBe(true);
-      expect(needsAmsReport(-1, plate(0))).toBe(false);
+      expect(needsAmsReport(-1, plate(0))).toBe(true);
+      expect(needsAmsReport(-1, null)).toBe(false);
       expect(needsAmsReport(-2, null)).toBe(false);
     });
   });
@@ -178,5 +182,79 @@ describe('buildAmsMapping', () => {
     const r = buildAmsMapping({ printerName: 'P', amsSlot: 0, plate: plate(0), latestPrint });
     expect(r.amsMapping).toEqual([5]);
     expect(r.amsMapping2).toEqual([{ ams_id: 1, slot_id: 1 }]);
+  });
+});
+
+// An H2D as the farm reports one: the AMS feeds the right nozzle (info bits 8-11 = 0) and
+// both external holders arrive in vir_slot (255 right, 254 left).
+function h2d({ ams = [['PLA', 'FFFFFFFF'], ['PETG', '000000FF'], ['', ''], ['', '']], info = '10001003', right = '', left = '' } = {}) {
+  return {
+    ams: { ams: [{ id: '0', info, tray: ams.map((t, i) => ({ id: String(i), tray_type: t[0], tray_color: t[1] })) }] },
+    vir_slot: [
+      { id: '255', tray_type: right, tray_color: right ? '00AE42FF' : '' },
+      { id: '254', tray_type: left, tray_color: left ? 'FF0000FF' : '' },
+    ],
+  };
+}
+
+describe('H2D nozzle mapping', () => {
+  const plate = (type = 'PETG', color = '000000') => ({ filamentCount: 1, used: [{ index: 0, type, color }] });
+
+  test('liveTrays reads the AMS nozzle from info and both external holders', () => {
+    const trays = liveTrays(h2d({ left: 'TPU', info: '10001103' }));
+    expect(trays.filter(t => !t.external).every(t => t.nozzle === 1)).toBe(true);
+    expect(trays.filter(t => t.external).map(t => [t.tray, t.nozzle, t.type])).toEqual([[255, 0, ''], [254, 1, 'TPU']]);
+    expect(liveTrays(h2d({ info: '10000E03' }))[0].nozzle).toBeNull();
+  });
+
+  test('older printers: vt_tray is the right holder', () => {
+    const trays = liveTrays({ ams: { ams: [] }, vt_tray: { id: '254', tray_type: 'PLA', tray_color: 'FFFFFFFF' } });
+    expect(trays).toEqual([expect.objectContaining({ tray: 255, nozzle: 0, external: true, type: 'PLA' })]);
+  });
+
+  test('match from AMS for a left-nozzle file skips the right-nozzle AMS and uses the left external spool', () => {
+    const r = buildAmsMapping({ printerName: 'H2D', amsSlot: -2, plate: plate('TPU'), latestPrint: h2d({ ams: [['TPU', '000000FF']], left: 'TPU' }), nozzle: 1 });
+    expect(r).toMatchObject({ useAms: false, amsMapping: [-1], amsMapping2: [{ ams_id: 254, slot_id: 0 }], tray: -1 });
+  });
+
+  test('match from AMS for a right-nozzle file uses the AMS', () => {
+    const r = buildAmsMapping({ printerName: 'H2D', amsSlot: -2, plate: plate('PETG'), latestPrint: h2d({ left: 'PETG' }), nozzle: 0 });
+    expect(r).toMatchObject({ useAms: true, amsMapping: [1], amsMapping2: [{ ams_id: 0, slot_id: 1 }], tray: 1 });
+  });
+
+  test('match from AMS prefers the AMS over the external spool on the same nozzle', () => {
+    const r = buildAmsMapping({ printerName: 'H2D', amsSlot: -2, plate: plate('PETG'), latestPrint: h2d({ right: 'PETG' }), nozzle: 0 });
+    expect(r.useAms).toBe(true);
+  });
+
+  test('match from AMS refuses when the only spool of the type feeds the other nozzle', () => {
+    expect(() => buildAmsMapping({ printerName: 'H2D', amsSlot: -2, plate: plate('PETG'), latestPrint: h2d(), nozzle: 1 }))
+      .toThrow(expect.objectContaining({ code: 'AMS_NO_MATCH', message: expect.stringContaining('on the left nozzle') }));
+  });
+
+  test('a fixed AMS slot feeding the other nozzle moves to a reachable spool', () => {
+    const r = buildAmsMapping({ printerName: 'H2D', amsSlot: 1, plate: plate('PETG'), latestPrint: h2d({ left: 'PETG' }), nozzle: 1 });
+    expect(r).toMatchObject({ useAms: false, amsMapping2: [{ ams_id: 254, slot_id: 0 }] });
+    expect(r.note).toContain('for the right nozzle');
+  });
+
+  test('external spool (-1) picks the holder on the file nozzle', () => {
+    const r = buildAmsMapping({ printerName: 'H2D', amsSlot: -1, plate: plate('TPU'), latestPrint: h2d({ left: 'TPU' }), nozzle: 1 });
+    expect(r).toMatchObject({ useAms: false, amsMapping: [-1], amsMapping2: [{ ams_id: 254, slot_id: 0 }], tray: -1 });
+  });
+
+  test('an explicit holder on the wrong side is refused', () => {
+    expect(() => buildAmsMapping({ printerName: 'H2D', amsSlot: 255, plate: plate('TPU'), latestPrint: h2d({ right: 'TPU' }), nozzle: 1 }))
+      .toThrow(expect.objectContaining({ code: 'AMS_WRONG_NOZZLE' }));
+  });
+
+  test('an external holder with another type is refused', () => {
+    expect(() => buildAmsMapping({ printerName: 'H2D', amsSlot: -1, plate: plate('TPU'), latestPrint: h2d({ left: 'PETG' }), nozzle: 1 }))
+      .toThrow(expect.objectContaining({ code: 'AMS_NO_MATCH' }));
+  });
+
+  test('without the file nozzle any tray will do, as before', () => {
+    const r = buildAmsMapping({ printerName: 'H2D', amsSlot: -2, plate: plate('PETG'), latestPrint: h2d(), nozzle: null });
+    expect(r.useAms).toBe(true);
   });
 });
