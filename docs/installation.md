@@ -246,7 +246,7 @@ Still in **Settings**, click **Add Printer**. Fill in:
 - **Name** — a short identifier (e.g. `MK4S_01`). Used throughout the UI.
 - **IP Address** — the local IP of the printer (see credential table above).
 - **API Key / Access Code** — see credential table above. The field is labelled **Access Code** for Bambu and Centauri Carbon 2 printers. Not needed for Elegoo Centauri Carbon (original) or Klipper.
-- **Serial Number** — Bambu and Elegoo Centauri Carbon 2 printers only.
+- **Serial Number** — Bambu and Elegoo Centauri Carbon 2 printers only. For a Bambu printer it is read from the printer when you leave the IP Address field (or click **Read From Printer**); type it in if that fails.
 - **Group** — optional, for organizing multiple printers (e.g. `MK4S Farm`).
 - **Model** — select from the models you added in Step 1.
 

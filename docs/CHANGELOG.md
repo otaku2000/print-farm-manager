@@ -2,6 +2,28 @@
 
 ---
 
+## 2026-11-11: Serial lookup, empty AMS slot reminders, searchable Group, Fleet tag fix
+
+Five requests from running the farm:
+
+- **Serial number from the IP.** Adding a Bambu printer needed its serial typed from the printer screen. Leaving the IP Address field now reads it from the printer: the TLS certificate its MQTT port presents carries the serial as its CN, issued by Bambu's CA. Checked on BL-H2D-001, BL-H2S-003 and BL-H2S-021, where it matched the stored serial. A **Read From Printer** link retries, and if nothing answers the field says so and stays editable. Elegoo Centauri Carbon 2 has no documented way to read it, so it is still typed in.
+- **Loaded Color under Auto.** With Loaded Material set to Auto (from AMS), Loaded Color showed "none". It now reads "Auto (from AMS)" in Add Printer, Printer Detail, and the Printers bulk bar.
+- **Searchable Group.** The Group field only suggested groups once you typed. It is now a dropdown that opens on click and filters as you type, and still accepts a new group name (Add Printer, Printer Detail, Printers bulk bar).
+- **Service Due tag.** On Fleet the tag shared the name row and truncated long printer names. It now sits on the model and group line.
+- **Empty AMS slot reminder.** When an AMS slot that held a spool reports empty, the farm raises an alert ("BL-H2S-010: AMS slot 2 is empty (was PETG). Load a new spool.") and the printer's Fleet card shows **Load Spool** with the slot numbers. Loading a spool into the slot clears both. Only slots seen running empty count: the first report after a server start only records what is loaded, so slots left empty on purpose never nag, and reminders (like all alerts) are cleared by a restart.
+
+### Changes
+- `server/drivers/bambu.js`: `lookupSerial(ip)` reads the serial from the MQTT TLS certificate.
+- `server/routes/printers.js`: `GET /api/printers/lookup-serial` and `GET /api/printers/empty-slots`.
+- `server/empty-slots.js` (new): tracks AMS slots that run empty, raises and clears reminders.
+- `server/index.js`: runs the empty-slot check after each poll.
+- `client/src/components/ComboBox.jsx` (new): searchable dropdown that accepts new values.
+- `client/src/pages/Settings.jsx`: serial lookup in Add Printer, Group dropdown, Loaded Color shows Auto.
+- `client/src/pages/PrinterDetail.jsx`, `client/src/pages/Printers.jsx`: Group dropdown, Loaded Color shows Auto.
+- `client/src/pages/Fleet.jsx`: Service Due moved to the model line; Load Spool tag.
+- `server/tests/bambu-serial.test.js`, `printers-lookup-serial.test.js`, `empty-slots.test.js` (new).
+- `docs/api.md`, `docs/installation.md`, `docs/web-app.md`: the new endpoints and behaviour.
+
 ## 2026-11-11: H2D trays matched to the nozzle the file prints with
 
 On an H2D each AMS feeds one nozzle and each nozzle has its own external spool holder, but the farm treated every tray as reachable and only knew one external spool. A file sliced for the left nozzle could be sent an AMS tray that feeds the right nozzle, and a spool on the left holder was invisible (the H2D reports its holders in `vir_slot`, which was not read; BL-H2D-001 has TPU on the left holder today). The driver now reads which nozzle each AMS feeds and both external holders, and only picks trays on the file's nozzle: the AMS on that nozzle first, then that nozzle's external spool, and a clear refusal when neither has the filament. Auto filament dispatch applies the same filter. On a printer with both holders, an external spool is now sent the way Bambu Studio sends it (`ams_mapping2` `{ 255 or 254, 0 }`); single-holder printers keep their current payload. Printer pages show both holders ("R-Ext", "L-Ext") and, on two-nozzle printers, which nozzle each AMS slot feeds. Implemented from Bambu Studio source and live reports; a left-nozzle print has not yet been validated on hardware.

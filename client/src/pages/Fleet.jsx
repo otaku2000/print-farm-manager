@@ -144,15 +144,8 @@ function PrinterCard({ printer, selected, onToggleSelect, onSetReady, onBadPrint
         <span style={{ fontWeight: 600, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {printer.name}
         </span>
-        <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-          {printer.maintenanceDue && (
-            <span title="Maintenance due" style={{ background: '#78350f', color: '#fbbf24', borderRadius: 4, padding: '2px 6px', fontSize: 11, fontWeight: 700 }}>
-              Service Due
-            </span>
-          )}
-          <span style={{ background: style.bg, color: style.text, borderRadius: 4, padding: '2px 8px', fontSize: 12, fontWeight: 700 }}>
-            {style.label}
-          </span>
+        <span style={{ background: style.bg, color: style.text, borderRadius: 4, padding: '2px 8px', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
+          {style.label}
         </span>
       </div>
 
@@ -167,6 +160,23 @@ function PrinterCard({ printer, selected, onToggleSelect, onSetReady, onBadPrint
         ) : (printer.loaded_material || printer.loaded_color) && (
           <span style={{ color: '#7dd3fc', fontSize: 11 }}>
             {[printer.loaded_material, printer.loaded_color].filter(Boolean).join(' · ')}
+          </span>
+        )}
+        {(printer.maintenanceDue || printer.emptySlots?.length > 0) && (
+          <span style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+            {printer.emptySlots?.length > 0 && (
+              <span
+                title={printer.emptySlots.map(e => `AMS slot ${e.slot + 1} ran out of ${e.was}`).join('\n')}
+                style={{ background: '#78350f', color: '#fbbf24', borderRadius: 4, padding: '1px 6px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}
+              >
+                Load Spool: {printer.emptySlots.map(e => e.slot + 1).join(', ')}
+              </span>
+            )}
+            {printer.maintenanceDue && (
+              <span title="Maintenance due" style={{ background: '#78350f', color: '#fbbf24', borderRadius: 4, padding: '1px 6px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                Service Due
+              </span>
+            )}
           </span>
         )}
       </div>
@@ -346,6 +356,7 @@ export default function Fleet() {
   const [showToast, toastEl]                  = useToast();
   const [printers, setPrinters]               = useState([]);
   const [maintDue, setMaintDue]               = useState(new Set());
+  const [emptySlots, setEmptySlots] = useState({});
   const [loading,setLoading]                 = useState(true);
   const [error, setError]                     = useState(null);
   const [filter, setFilter]                   = useState('ALL');
@@ -370,6 +381,8 @@ export default function Fleet() {
       fetch('/api/maintenance').then(r => r.json())
         .then(m => setMaintDue(new Set(m.printers.filter(p => p.overdue).map(p => p.printer_id))))
         .catch(() => {});
+      // AMS slots that ran empty (server/empty-slots.js): passive, like maintenance.
+      fetch('/api/printers/empty-slots').then(r => r.json()).then(setEmptySlots).catch(() => {});
       setLastPolled(Date.now());
       setError(null);
     } catch (err) {
@@ -932,7 +945,7 @@ export default function Fleet() {
             {group.map((printer) => (
               <PrinterCard
                 key={printer.id}
-                printer={maintDue.has(printer.id) ? { ...printer, maintenanceDue: true } : printer}
+                printer={{ ...printer, maintenanceDue: maintDue.has(printer.id), emptySlots: emptySlots[printer.id] || [] }}
                 selected={selectedForReady.has(printer.id)}
                 onToggleSelect={toggleSelect}
                 onSetReady={setReady}

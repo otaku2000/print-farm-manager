@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useToast } from '../useToast';
 import { useConfirm } from '../useConfirm';
+import ComboBox from '../components/ComboBox';
 
 const inputStyle = {
   background: '#0f172a',
@@ -146,6 +147,29 @@ export default function Settings() {
   }
 
   const [addForm, setAddForm] = useState({ name: '', ip: '', api_key: '', serial_number: '', model: '', group_name: '', type: 'prusa', loaded_material: '', loaded_color: '' });
+  // Bambu serial lookup from the IP: { state: 'looking' | 'found' | 'error', ip, message }.
+  const [serialLookup, setSerialLookup] = useState(null);
+
+  // Reads the serial number from the Bambu printer at the entered IP (GET
+  // /api/printers/lookup-serial) and fills the Serial Number field. Runs when the IP field
+  // loses focus with no serial typed yet, or from the Read From Printer link.
+  async function lookupSerial(ip) {
+    const target = (ip || '').trim();
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(target)) {
+      setSerialLookup({ state: 'error', ip: target, message: 'Enter the IP address first' });
+      return;
+    }
+    setSerialLookup({ state: 'looking', ip: target });
+    try {
+      const res = await fetch(`/api/printers/lookup-serial?type=bambu&ip=${encodeURIComponent(target)}`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.serial) throw new Error(body.error || `lookup failed (${res.status})`);
+      setAddForm(p => (p.ip.trim() === target ? { ...p, serial_number: body.serial } : p));
+      setSerialLookup({ state: 'found', ip: target, message: 'Read from the printer' });
+    } catch (err) {
+      setSerialLookup({ state: 'error', ip: target, message: err.message });
+    }
+  }
   const [addResult, setAddResult] = useState(null);
   const [addError, setAddError] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -191,6 +215,7 @@ export default function Settings() {
       if (!res.ok) throw new Error(data.error || 'Add failed');
       setAddResult(data);
       setAddForm({ name: '', ip: '', api_key: '', serial_number: '', model: 'mk4s', group_name: '', type: 'prusa', loaded_material: '', loaded_color: '' });
+      setSerialLookup(null);
     } catch (err) {
       setAddError(err.message);
     } finally {
@@ -894,6 +919,9 @@ export default function Settings() {
               <input
                 value={addForm.ip}
                 onChange={e => setAddForm(p => ({ ...p, ip: e.target.value }))}
+                onBlur={() => {
+                  if (addForm.type === 'bambu' && !addForm.serial_number.trim() && addForm.ip.trim()) lookupSerial(addForm.ip);
+                }}
                 required
                 placeholder="192.168.1.100"
                 style={inputStyle}
@@ -901,14 +929,31 @@ export default function Settings() {
             </div>
             {(addForm.type === 'bambu' || addForm.type === 'elegoo-centauri2') && (
               <div>
-                <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>Serial Number *</label>
+                <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>
+                  <span>Serial Number *</span>
+                  {addForm.type === 'bambu' && (
+                    <button
+                      type="button"
+                      onClick={() => lookupSerial(addForm.ip)}
+                      disabled={serialLookup?.state === 'looking'}
+                      style={{ background: 'none', border: 'none', padding: 0, color: '#60a5fa', fontSize: 12, cursor: 'pointer' }}
+                    >
+                      {serialLookup?.state === 'looking' ? 'Reading…' : 'Read From Printer'}
+                    </button>
+                  )}
+                </label>
                 <input
                   value={addForm.serial_number}
                   onChange={e => setAddForm(p => ({ ...p, serial_number: e.target.value }))}
                   required
-                  placeholder={addForm.type === 'bambu' ? '00M09C123400789' : 'CC2-XXXXXX'}
+                  placeholder={addForm.type === 'bambu' ? (serialLookup?.state === 'looking' ? 'Reading from printer…' : '00M09C123400789') : 'CC2-XXXXXX'}
                   style={inputStyle}
                 />
+                {addForm.type === 'bambu' && serialLookup && serialLookup.state !== 'looking' && (
+                  <div style={{ fontSize: 11.5, marginTop: 4, color: serialLookup.state === 'found' ? '#4ade80' : '#fbbf24' }}>
+                    {serialLookup.state === 'found' ? serialLookup.message : `Could not read the serial: ${serialLookup.message}. Type it in.`}
+                  </div>
+                )}
               </div>
             )}
             {!NO_API_KEY_TYPES.has(addForm.type) && (
@@ -927,16 +972,13 @@ export default function Settings() {
             )}
             <div>
               <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>Group (optional)</label>
-              <input
+              <ComboBox
                 value={addForm.group_name}
-                onChange={e => setAddForm(p => ({ ...p, group_name: e.target.value }))}
+                onChange={v => setAddForm(p => ({ ...p, group_name: v }))}
+                options={allGroups.map(g => g.name)}
                 placeholder="Rack A"
-                list="add-printer-group-options"
-                style={inputStyle}
+                inputStyle={inputStyle}
               />
-              <datalist id="add-printer-group-options">
-                {allGroups.map(g => <option key={g.name} value={g.name} />)}
-              </datalist>
             </div>
             <div>
               <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>Loaded Material</label>
@@ -953,12 +995,14 @@ export default function Settings() {
             <div>
               <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>Loaded Color</label>
               <select
-                value={addForm.loaded_material === AUTO_FILAMENT ? '' : addForm.loaded_color}
+                value={addForm.loaded_material === AUTO_FILAMENT ? AUTO_FILAMENT : addForm.loaded_color}
                 onChange={e => setAddForm(p => ({ ...p, loaded_color: e.target.value }))}
                 disabled={!addForm.loaded_material || addForm.loaded_material === AUTO_FILAMENT}
                 style={inputStyle}
               >
-                <option value="">— none —</option>
+                {addForm.loaded_material === AUTO_FILAMENT
+                  ? <option value={AUTO_FILAMENT}>Auto (from AMS)</option>
+                  : <option value="">— none —</option>}
                 {filamentColors
                   .filter(c => c.type_name === addForm.loaded_material)
                   .map(c => <option key={c.id} value={c.name}>{c.name}</option>)}

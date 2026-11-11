@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LoadedFilamentChips } from '../components/LoadedFilament';
+import ComboBox from '../components/ComboBox';
 
 const STATUS_COLORS = {
   IDLE:     { bg: '#1e3a5f', text: '#93c5fd' },
@@ -328,27 +329,26 @@ export default function Printers() {
             {filamentTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
           </select>
           <select
-            value={bulkColor}
+            value={bulkMaterial === AUTO_FILAMENT ? AUTO_FILAMENT : bulkColor}
             onChange={e => setBulkColor(e.target.value)}
             disabled={!bulkMaterial || bulkMaterial === AUTO_FILAMENT}
             style={bulkInputSx}
           >
-            <option value="">Color…</option>
+            {bulkMaterial === AUTO_FILAMENT
+              ? <option value={AUTO_FILAMENT}>Auto (from AMS)</option>
+              : <option value="">Color…</option>}
             {filamentColors
               .filter(c => c.type_name === bulkMaterial)
               .map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
           </select>
-          <input
-            type="text"
-            list="bulk-group-options"
+          <ComboBox
             value={bulkGroup}
-            onChange={e => setBulkGroup(e.target.value)}
+            onChange={setBulkGroup}
+            options={existingGroups}
             placeholder="Group…"
-            style={{ ...bulkInputSx, width: 130 }}
+            style={{ width: 150 }}
+            inputStyle={bulkInputSx}
           />
-          <datalist id="bulk-group-options">
-            {existingGroups.map(g => <option key={g} value={g} />)}
-          </datalist>
           <button
             onClick={applyBulk}
             disabled={!canApply || applying}
